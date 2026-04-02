@@ -16,19 +16,19 @@ The test suite found kernel bugs on its first run — including a panic caused b
 
 ## What it tests
 
-566 test assertions across 52 x86-64 syscalls.
+362 tests across 52 x86-64 syscalls (on Linux reference).
 
-| Category | Tests | APIs |
-|----------|-------|------|
-| Memory management | 75 | mmap, munmap, mprotect, brk |
-| I/O multiplexing | 96 | poll, ppoll, select, pselect6, epoll |
-| Process/thread info | 83 | getpid, gettid, getcwd, chdir, getrandom, prlimit64, sched_getaffinity |
-| File descriptors | 62 | dup, dup2, dup3, close, fstat, fcntl |
-| Sockets | 62 | socket, bind, listen, accept, connect, setsockopt, getsockopt |
-| Timers/clocks | 59 | clock_gettime, clock_getres, nanosleep, timer_create/settime/delete |
-| Pipes & vectored I/O | 50 | pipe2, read, write, readv, writev |
-| Signals | 47 | sigprocmask, sigaction, kill, tkill, tgkill |
-| Core (TLS, futex, stdio) | 32 | arch_prctl, futex, standard fd verification |
+| Category | APIs |
+|----------|------|
+| Memory management | mmap, munmap, mprotect, brk |
+| I/O multiplexing | poll, ppoll, select, pselect6, epoll |
+| Process/thread info | getpid, gettid, getcwd, chdir, getrandom, prlimit64, sched_getaffinity |
+| File descriptors | dup, dup2, dup3, close, fstat, fcntl |
+| Sockets | socket, bind, listen, accept, connect, setsockopt, getsockopt |
+| Timers/clocks | clock_gettime, clock_getres, nanosleep, timer_create/settime/delete |
+| Pipes & vectored I/O | pipe2, read, write, readv, writev |
+| Signals | sigprocmask, sigaction, kill, tkill, tgkill |
+| Core (TLS, futex, stdio) | arch_prctl, futex, standard fd verification |
 
 Each syscall has positive, negative, and boundary tests. Negative tests verify specific errno values, not just failure.
 
