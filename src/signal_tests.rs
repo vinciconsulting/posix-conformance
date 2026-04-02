@@ -44,7 +44,7 @@ const EPERM: i64 = -1;
 static SIGNAL_RECEIVED: AtomicU32 = AtomicU32::new(0);
 static SIGNAL_NUMBER: AtomicU32 = AtomicU32::new(0);
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn test_sig_handler(sig: i32) {
     SIGNAL_RECEIVED.store(1, Ordering::SeqCst);
     SIGNAL_NUMBER.store(sig as u32, Ordering::SeqCst);
@@ -52,7 +52,7 @@ extern "C" fn test_sig_handler(sig: i32) {
 
 // Signal restorer (required for rt_sigaction)
 #[unsafe(naked)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn sig_restorer() {
     core::arch::naked_asm!(
         "mov rax, 15",  // __NR_rt_sigreturn
