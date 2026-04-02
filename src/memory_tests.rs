@@ -185,6 +185,9 @@ pub fn test_mmap_negative() {
     }
 
     // 3. MAP_FIXED at address 0
+    // Implementation-defined: Linux allows unless vm.mmap_min_addr is set.
+    // If success: must map at exactly address 0 (MAP_FIXED semantics).
+    // If failure: must return -EINVAL or -ENOMEM, not arbitrary error.
     let ret = unsafe {
         syscall6(
             nr::MMAP,
@@ -196,11 +199,13 @@ pub fn test_mmap_negative() {
             0,
         )
     };
-    if ret < 0 {
-        pass("mmap(MAP_FIXED, addr=0) error");
+    if ret == 0 {
+        pass("mmap(MAP_FIXED, addr=0) mapped at 0");
+        unsafe { syscall2(nr::MUNMAP, 0, 4096) };
+    } else if ret == EINVAL || ret == ENOMEM {
+        pass("mmap(MAP_FIXED, addr=0) rejected with valid errno");
     } else {
-        fail("mmap(MAP_FIXED, addr=0) error");
-        unsafe { syscall2(nr::MUNMAP, ret as u64, 4096) };
+        fail_errno("mmap(MAP_FIXED, addr=0) unexpected result", EINVAL, ret);
     }
 
     // 4. Neither SHARED nor PRIVATE
