@@ -658,8 +658,9 @@ pub extern "C" fn _start() -> ! {
 
 extern "C" fn main() -> ! {
     write_str("════════════════════════════════════════════════════════════\n");
-    write_str("  PSE51/PSE52/PSE53 Domain Correctness Test Suite\n");
-    write_str("  IEEE 1003.13-2003 - Comprehensive POSIX Conformance\n");
+    write_str("  PSE51/PSE52/PSE53 POSIX Conformance Test Suite v");
+    write_str(env!("CARGO_PKG_VERSION"));
+    write_str("\n  IEEE 1003.13-2003\n");
     write_str("════════════════════════════════════════════════════════════\n");
 
     // Standard file descriptors (fd 0/1/2 must be pre-initialized)
