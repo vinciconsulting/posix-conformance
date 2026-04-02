@@ -1,0 +1,12 @@
+stages:
+  - test
+
+conformance:
+  stage: test
+  image: rust:latest
+  script:
+    - cargo build --release
+    - setarch -R ./target/release/posix-conformance
+  only:
+    - main
+    - merge_requests

@@ -1,0 +1,27 @@
+[package]
+name = "posix-conformance"
+version = "0.3.0"
+edition = "2024"
+description = "PSE51/PSE52/PSE53 POSIX conformance test suite (no_std, no libc, direct syscalls)"
+license = "MIT"
+repository = "https://gitlab.com/vinci-consulting/posix-conformance"
+keywords = ["posix", "conformance", "rtos", "no_std", "embedded"]
+categories = ["no-std", "os", "embedded"]
+
+[[bin]]
+name = "posix-conformance"
+path = "src/main.rs"
+
+[dependencies]
+# No dependencies - pure no_std
+
+[workspace]
+# Standalone package - not part of main workspace
+
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
