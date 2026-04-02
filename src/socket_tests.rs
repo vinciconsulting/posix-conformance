@@ -9,11 +9,14 @@
 use crate::{fail, fail_errno, nr, pass, syscall1, syscall2, syscall3, syscall5, write_str};
 
 // Error codes
+const EPERM: i64 = -1;
+const EACCES: i64 = -13;
 const EBADF: i64 = -9;
 const EINVAL: i64 = -22;
 const EAFNOSUPPORT: i64 = -97;
 const ENOTSOCK: i64 = -88;
 const ENOPROTOOPT: i64 = -92;
+const EPROTONOSUPPORT: i64 = -93;
 
 // Address families
 const AF_UNIX: u64 = 1;
@@ -145,33 +148,37 @@ fn test_socket_negative() {
         fail_errno("socket(AF=999) -EAFNOSUPPORT", EAFNOSUPPORT, ret);
     }
 
-    // 2. Invalid socket type
+    // 2. Invalid socket type — POSIX requires EINVAL or EPROTONOSUPPORT
     let ret = unsafe { syscall3(nr::SOCKET, AF_INET, 999, 0) };
-    if ret < 0 {
-        pass("socket(type=999) error");
+    if ret == EINVAL || ret == EPROTONOSUPPORT {
+        pass("socket(type=999) valid errno");
     } else {
-        fail("socket(type=999) error");
-        unsafe { syscall1(nr::CLOSE, ret as u64) };
+        fail_errno("socket(type=999) expected EINVAL or EPROTONOSUPPORT", EINVAL, ret);
+        if ret >= 0 { unsafe { syscall1(nr::CLOSE, ret as u64) }; }
     }
 
-    // 3. Invalid protocol for type
+    // 3. Invalid protocol for type — POSIX requires EPROTONOSUPPORT
     let ret = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_STREAM, IPPROTO_UDP) };
-    if ret < 0 {
-        pass("socket(STREAM, UDP) error");
-    } else {
-        // Some systems allow mismatched proto
-        pass("socket(STREAM, UDP) allowed");
+    if ret == EPROTONOSUPPORT {
+        pass("socket(STREAM, UDP) -EPROTONOSUPPORT");
+    } else if ret >= 0 {
+        // Linux allows mismatched proto in some configurations
+        pass("socket(STREAM, UDP) accepted (Linux-permissive)");
         unsafe { syscall1(nr::CLOSE, ret as u64) };
+    } else {
+        fail_errno("socket(STREAM, UDP) unexpected error", EPROTONOSUPPORT, ret);
     }
 
-    // 4. RAW socket without privilege
+    // 4. RAW socket without privilege — expects EPERM or EACCES
     let ret = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_RAW, 0) };
-    if ret < 0 {
-        pass("socket(RAW) error (expected)");
-    } else {
-        // Might succeed with caps
-        pass("socket(RAW) allowed");
+    if ret == EPERM || ret == EACCES {
+        pass("socket(RAW) -EPERM/-EACCES (unprivileged)");
+    } else if ret >= 0 {
+        // Succeeds with CAP_NET_RAW (e.g., running as root in CI container)
+        pass("socket(RAW) allowed (privileged)");
         unsafe { syscall1(nr::CLOSE, ret as u64) };
+    } else {
+        fail_errno("socket(RAW) unexpected error", EPERM, ret);
     }
 }
 
@@ -415,10 +422,8 @@ fn test_sockopt_negative() {
         };
         if ret == ENOPROTOOPT {
             pass("setsockopt(invalid opt) -ENOPROTOOPT");
-        } else if ret < 0 {
-            pass("setsockopt(invalid opt) error");
         } else {
-            fail("setsockopt(invalid opt) error");
+            fail_errno("setsockopt(invalid opt) -ENOPROTOOPT", ENOPROTOOPT, ret);
         }
         unsafe { syscall1(nr::CLOSE, fd as u64) };
     }
@@ -553,14 +558,12 @@ fn test_shutdown() {
         fail_errno("shutdown(bad fd) -EBADF", EBADF, ret);
     }
 
-    // shutdown with invalid how
+    // shutdown with invalid how — POSIX requires EINVAL
     let ret = unsafe { syscall2(nr::SHUTDOWN, fd as u64, 999) };
     if ret == EINVAL {
         pass("shutdown(how=999) -EINVAL");
-    } else if ret < 0 {
-        pass("shutdown(how=999) error");
     } else {
-        fail("shutdown(how=999) error");
+        fail_errno("shutdown(how=999) -EINVAL", EINVAL, ret);
     }
 
     unsafe { syscall1(nr::CLOSE, fd as u64) };
