@@ -26,6 +26,9 @@ mod signal_tests;
 mod poll_tests;
 mod time_tests;
 mod process_tests;
+mod fork_tests;
+mod fs_tests;
+mod thread_tests;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Linux syscall numbers (x86-64)
@@ -696,6 +699,15 @@ extern "C" fn main() -> ! {
 
     // PSE53: I/O Multiplexing - Comprehensive tests
     poll_tests::run_all();
+
+    // PSE52: Fork/exec/wait
+    fork_tests::run_all();
+
+    // PSE52: Filesystem operations
+    fs_tests::run_all();
+
+    // PSE51: Threads (pthread via clone)
+    thread_tests::run_all();
 
     // Summary
     write_str("\n════════════════════════════════════════════════════════════\n");

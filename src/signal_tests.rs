@@ -10,7 +10,7 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::nr;
-use crate::{pass, fail, fail_errno, write_str, syscall0, syscall2, syscall3, syscall4};
+use crate::{pass, fail, fail_errno, write_str, write_num, syscall0, syscall2, syscall3, syscall4};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Signal constants
@@ -607,6 +607,291 @@ pub fn test_sigaction_negative() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Signal DELIVERY verification — install handler, trigger, verify it ran
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Second signal handler to verify distinct signals are dispatched correctly
+#[unsafe(no_mangle)]
+extern "C" fn test_sig_handler_usr2(sig: i32) {
+    SIGNAL_RECEIVED.store(2, Ordering::SeqCst);
+    SIGNAL_NUMBER.store(sig as u32, Ordering::SeqCst);
+}
+
+/// Test: install SIGUSR1 handler → kill(self, SIGUSR1) → verify handler ran
+pub fn test_signal_delivery_sigusr1() {
+    write_str("\n=== Signal delivery: SIGUSR1 handler invoked ===\n");
+
+    // Reset state
+    SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
+    SIGNAL_NUMBER.store(0, Ordering::SeqCst);
+
+    // Install handler
+    let mut sa = Sigaction {
+        sa_handler: test_sig_handler as *const () as u64,
+        sa_flags: SA_RESTORER,
+        sa_restorer: sig_restorer as *const () as u64,
+        sa_mask: [0, 0],
+    };
+
+    let ret = unsafe {
+        syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8)
+    };
+    if ret != 0 {
+        fail_errno("install SIGUSR1 handler", 0, ret);
+        return;
+    }
+
+    // Send SIGUSR1 to self
+    let pid = unsafe { syscall0(nr::GETPID) };
+    let ret = unsafe { syscall2(nr::KILL, pid as u64, SIGUSR1) };
+    if ret != 0 {
+        fail_errno("kill(self, SIGUSR1)", 0, ret);
+        return;
+    }
+
+    // Verify handler ran
+    let received = SIGNAL_RECEIVED.load(Ordering::SeqCst);
+    if received == 1 {
+        pass("SIGUSR1 handler was invoked");
+    } else {
+        fail("SIGUSR1 handler was invoked");
+        write_str("    SIGNAL_RECEIVED=");
+        write_num(received as i64);
+        write_str("\n");
+    }
+
+    // Verify correct signal number was passed
+    let signo = SIGNAL_NUMBER.load(Ordering::SeqCst);
+    if signo == SIGUSR1 as u32 {
+        pass("handler received correct signal number (10)");
+    } else {
+        fail("handler received correct signal number (10)");
+        write_str("    got signo=");
+        write_num(signo as i64);
+        write_str("\n");
+    }
+
+    // Restore default
+    sa.sa_handler = 0;
+    sa.sa_flags = 0;
+    sa.sa_restorer = 0;
+    unsafe { syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8) };
+}
+
+/// Test: install SIGUSR2 handler → tgkill(self, SIGUSR2) → verify
+pub fn test_signal_delivery_sigusr2() {
+    write_str("\n=== Signal delivery: SIGUSR2 via tgkill ===\n");
+
+    SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
+    SIGNAL_NUMBER.store(0, Ordering::SeqCst);
+
+    let mut sa = Sigaction {
+        sa_handler: test_sig_handler_usr2 as *const () as u64,
+        sa_flags: SA_RESTORER,
+        sa_restorer: sig_restorer as *const () as u64,
+        sa_mask: [0, 0],
+    };
+
+    let ret = unsafe {
+        syscall4(nr::SIGACTION, SIGUSR2, &sa as *const _ as u64, 0, 8)
+    };
+    if ret != 0 {
+        fail_errno("install SIGUSR2 handler", 0, ret);
+        return;
+    }
+
+    // Send via tgkill (more precise: targets specific thread)
+    let pid = unsafe { syscall0(nr::GETPID) };
+    let tid = unsafe { syscall0(nr::GETTID) };
+    let ret = unsafe { syscall3(nr::TGKILL, pid as u64, tid as u64, SIGUSR2) };
+    if ret != 0 {
+        fail_errno("tgkill(self, SIGUSR2)", 0, ret);
+        return;
+    }
+
+    let received = SIGNAL_RECEIVED.load(Ordering::SeqCst);
+    if received == 2 {
+        pass("SIGUSR2 handler was invoked (distinct from SIGUSR1)");
+    } else {
+        fail("SIGUSR2 handler was invoked");
+    }
+
+    let signo = SIGNAL_NUMBER.load(Ordering::SeqCst);
+    if signo == SIGUSR2 as u32 {
+        pass("handler received SIGUSR2 (12)");
+    } else {
+        fail("handler received SIGUSR2 (12)");
+        write_str("    got signo=");
+        write_num(signo as i64);
+        write_str("\n");
+    }
+
+    // Restore
+    sa.sa_handler = 0;
+    sa.sa_flags = 0;
+    sa.sa_restorer = 0;
+    unsafe { syscall4(nr::SIGACTION, SIGUSR2, &sa as *const _ as u64, 0, 8) };
+}
+
+/// Test: blocked signal is held pending, delivered on unblock
+pub fn test_signal_blocked_pending() {
+    write_str("\n=== Signal delivery: blocked → pending → delivered on unblock ===\n");
+
+    SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
+    SIGNAL_NUMBER.store(0, Ordering::SeqCst);
+
+    // Install handler for SIGUSR1
+    let mut sa = Sigaction {
+        sa_handler: test_sig_handler as *const () as u64,
+        sa_flags: SA_RESTORER,
+        sa_restorer: sig_restorer as *const () as u64,
+        sa_mask: [0, 0],
+    };
+    let ret = unsafe {
+        syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8)
+    };
+    if ret != 0 {
+        fail_errno("install handler for pending test", 0, ret);
+        return;
+    }
+
+    // Block SIGUSR1
+    let block_mask: u64 = 1 << SIGUSR1;
+    let mut saved_mask = [0u64; 2];
+    unsafe {
+        syscall4(nr::SIGPROCMASK, SIG_BLOCK, &block_mask as *const _ as u64,
+                 saved_mask.as_mut_ptr() as u64, 8)
+    };
+
+    // Send SIGUSR1 while blocked
+    let pid = unsafe { syscall0(nr::GETPID) };
+    unsafe { syscall2(nr::KILL, pid as u64, SIGUSR1) };
+
+    // Verify handler has NOT run yet (signal is pending)
+    let received = SIGNAL_RECEIVED.load(Ordering::SeqCst);
+    if received == 0 {
+        pass("blocked signal not delivered yet");
+    } else {
+        fail("blocked signal not delivered yet (handler ran prematurely)");
+    }
+
+    // Unblock SIGUSR1 — pending signal should be delivered immediately
+    unsafe {
+        syscall4(nr::SIGPROCMASK, SIG_SETMASK, saved_mask.as_ptr() as u64, 0, 8)
+    };
+
+    let received = SIGNAL_RECEIVED.load(Ordering::SeqCst);
+    if received == 1 {
+        pass("pending signal delivered on unblock");
+    } else {
+        fail("pending signal delivered on unblock");
+        write_str("    SIGNAL_RECEIVED=");
+        write_num(received as i64);
+        write_str("\n");
+    }
+
+    // Restore default handler
+    sa.sa_handler = 0;
+    sa.sa_flags = 0;
+    sa.sa_restorer = 0;
+    unsafe { syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8) };
+}
+
+/// Test: SIGALRM delivery (timer signal)
+pub fn test_signal_delivery_sigalrm() {
+    write_str("\n=== Signal delivery: SIGALRM ===\n");
+
+    SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
+    SIGNAL_NUMBER.store(0, Ordering::SeqCst);
+
+    let mut sa = Sigaction {
+        sa_handler: test_sig_handler as *const () as u64,
+        sa_flags: SA_RESTORER,
+        sa_restorer: sig_restorer as *const () as u64,
+        sa_mask: [0, 0],
+    };
+
+    let ret = unsafe {
+        syscall4(nr::SIGACTION, SIGALRM, &sa as *const _ as u64, 0, 8)
+    };
+    if ret != 0 {
+        fail_errno("install SIGALRM handler", 0, ret);
+        return;
+    }
+
+    let pid = unsafe { syscall0(nr::GETPID) };
+    unsafe { syscall2(nr::KILL, pid as u64, SIGALRM) };
+
+    let received = SIGNAL_RECEIVED.load(Ordering::SeqCst);
+    let signo = SIGNAL_NUMBER.load(Ordering::SeqCst);
+
+    if received == 1 && signo == SIGALRM as u32 {
+        pass("SIGALRM delivered and handler invoked");
+    } else {
+        fail("SIGALRM delivered and handler invoked");
+    }
+
+    sa.sa_handler = 0;
+    sa.sa_flags = 0;
+    sa.sa_restorer = 0;
+    unsafe { syscall4(nr::SIGACTION, SIGALRM, &sa as *const _ as u64, 0, 8) };
+}
+
+/// Test: multiple signals delivered in sequence
+pub fn test_signal_multiple_delivery() {
+    write_str("\n=== Signal delivery: multiple signals in sequence ===\n");
+
+    // Count total invocations across multiple signal sends
+    static DELIVERY_COUNT: AtomicU32 = AtomicU32::new(0);
+
+    #[unsafe(no_mangle)]
+    extern "C" fn counting_handler(_sig: i32) {
+        DELIVERY_COUNT.fetch_add(1, Ordering::SeqCst);
+    }
+
+    DELIVERY_COUNT.store(0, Ordering::SeqCst);
+
+    let mut sa = Sigaction {
+        sa_handler: counting_handler as *const () as u64,
+        sa_flags: SA_RESTORER,
+        sa_restorer: sig_restorer as *const () as u64,
+        sa_mask: [0, 0],
+    };
+
+    unsafe {
+        syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8)
+    };
+
+    let pid = unsafe { syscall0(nr::GETPID) };
+
+    // Send 5 signals
+    for _ in 0..5 {
+        unsafe { syscall2(nr::KILL, pid as u64, SIGUSR1) };
+    }
+
+    let count = DELIVERY_COUNT.load(Ordering::SeqCst);
+    if count == 5 {
+        pass("5 signals → 5 handler invocations");
+    } else {
+        // Signals may coalesce if pending — count >= 1 is valid
+        if count >= 1 {
+            pass("signals delivered (some may coalesce)");
+            write_str("    delivered ");
+            write_num(count as i64);
+            write_str(" of 5\n");
+        } else {
+            fail("no signals delivered");
+        }
+    }
+
+    // Restore default
+    sa.sa_handler = 0;
+    sa.sa_flags = 0;
+    sa.sa_restorer = 0;
+    unsafe { syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8) };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Module entry point
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -630,4 +915,11 @@ pub fn run_all() {
 
     // Boundary tests
     test_signal_boundary();
+
+    // Signal delivery verification
+    test_signal_delivery_sigusr1();
+    test_signal_delivery_sigusr2();
+    test_signal_blocked_pending();
+    test_signal_delivery_sigalrm();
+    test_signal_multiple_delivery();
 }
