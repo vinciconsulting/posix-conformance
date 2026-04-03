@@ -8,8 +8,9 @@
 //! - Boundary: zero timeout, max fds, empty fd sets
 
 use crate::nr;
-use crate::{pass, fail, fail_errno, write_str, syscall1, syscall2, syscall3, syscall5, syscall6};
+use crate::{syscall1, syscall2, syscall3, syscall5, syscall6};
 use crate::{Pollfd, Timespec};
+use crate::{PseLevel, TestCategory};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constants
@@ -57,30 +58,30 @@ fn close_pipe(read_fd: i32, write_fd: i32) {
 // Poll tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_poll_positive() {
-    write_str("\n=== Poll: positive tests ===\n");
+pub fn test_poll_positive(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. Poll empty pipe read end (not ready, timeout immediately)
     let Some((read_fd, write_fd)) = create_pipe() else {
-        fail("poll test: pipe setup");
+        cat.fail("poll test: pipe setup");
         return;
     };
 
     let mut pollfds = [Pollfd { fd: read_fd, events: POLLIN, revents: 0 }];
     let ret = unsafe { syscall3(nr::POLL, pollfds.as_mut_ptr() as u64, 1, 0) };
     if ret == 0 && pollfds[0].revents == 0 {
-        pass("poll: empty pipe read not ready (timeout 0)");
+        cat.pass("poll: empty pipe read not ready (timeout 0)");
     } else {
-        fail("poll: empty pipe read not ready (timeout 0)");
+        cat.fail("poll: empty pipe read not ready (timeout 0)");
     }
 
     // 2. Poll pipe write end (should be ready - has space)
     pollfds[0] = Pollfd { fd: write_fd, events: POLLOUT, revents: 0 };
     let ret = unsafe { syscall3(nr::POLL, pollfds.as_mut_ptr() as u64, 1, 0) };
     if ret >= 1 && (pollfds[0].revents & POLLOUT) != 0 {
-        pass("poll: pipe write ready (POLLOUT)");
+        cat.pass("poll: pipe write ready (POLLOUT)");
     } else {
-        fail("poll: pipe write ready (POLLOUT)");
+        cat.fail("poll: pipe write ready (POLLOUT)");
     }
 
     // 3. Write to pipe, then poll read end
@@ -89,9 +90,9 @@ pub fn test_poll_positive() {
     pollfds[0] = Pollfd { fd: read_fd, events: POLLIN, revents: 0 };
     let ret = unsafe { syscall3(nr::POLL, pollfds.as_mut_ptr() as u64, 1, 0) };
     if ret >= 1 && (pollfds[0].revents & POLLIN) != 0 {
-        pass("poll: pipe read ready after write (POLLIN)");
+        cat.pass("poll: pipe read ready after write (POLLIN)");
     } else {
-        fail("poll: pipe read ready after write (POLLIN)");
+        cat.fail("poll: pipe read ready after write (POLLIN)");
     }
 
     // 4. Poll multiple fds
@@ -101,18 +102,18 @@ pub fn test_poll_positive() {
     ];
     let ret = unsafe { syscall3(nr::POLL, pollfds2.as_mut_ptr() as u64, 2, 0) };
     if ret >= 1 {
-        pass("poll: multiple fds returns count");
+        cat.pass("poll: multiple fds returns count");
     } else {
-        fail("poll: multiple fds returns count");
+        cat.fail("poll: multiple fds returns count");
     }
 
     // 5. Poll with POLLPRI (out-of-band data, typically not available on pipes)
     pollfds[0] = Pollfd { fd: read_fd, events: POLLPRI, revents: 0 };
     let ret = unsafe { syscall3(nr::POLL, pollfds.as_mut_ptr() as u64, 1, 0) };
     if ret == 0 || ret >= 0 {
-        pass("poll: POLLPRI handled gracefully");
+        cat.pass("poll: POLLPRI handled gracefully");
     } else {
-        fail("poll: POLLPRI handled gracefully");
+        cat.fail("poll: POLLPRI handled gracefully");
     }
 
     // 6. Poll with timeout (1ms) - should timeout
@@ -121,9 +122,9 @@ pub fn test_poll_positive() {
     pollfds[0] = Pollfd { fd: read_fd, events: POLLIN, revents: 0 };
     let ret = unsafe { syscall3(nr::POLL, pollfds.as_mut_ptr() as u64, 1, 1) };
     if ret == 0 {
-        pass("poll: 1ms timeout returns 0 (no events)");
+        cat.pass("poll: 1ms timeout returns 0 (no events)");
     } else {
-        fail("poll: 1ms timeout returns 0 (no events)");
+        cat.fail("poll: 1ms timeout returns 0 (no events)");
     }
 
     // 7. Poll with negative timeout (infinite, but we have data)
@@ -131,41 +132,41 @@ pub fn test_poll_positive() {
     pollfds[0] = Pollfd { fd: read_fd, events: POLLIN, revents: 0 };
     let ret = unsafe { syscall3(nr::POLL, pollfds.as_mut_ptr() as u64, 1, -1i64 as u64) };
     if ret >= 1 && (pollfds[0].revents & POLLIN) != 0 {
-        pass("poll: infinite timeout returns when ready");
+        cat.pass("poll: infinite timeout returns when ready");
     } else {
-        fail("poll: infinite timeout returns when ready");
+        cat.fail("poll: infinite timeout returns when ready");
     }
 
     close_pipe(read_fd, write_fd);
 }
 
-pub fn test_poll_negative() {
-    write_str("\n=== Poll: negative tests ===\n");
+pub fn test_poll_negative(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. Poll with invalid fd
     let mut pollfds = [Pollfd { fd: 999, events: POLLIN, revents: 0 }];
     let ret = unsafe { syscall3(nr::POLL, pollfds.as_mut_ptr() as u64, 1, 0) };
     if ret == 1 && (pollfds[0].revents & POLLNVAL) != 0 {
-        pass("poll: invalid fd returns POLLNVAL");
+        cat.pass("poll: invalid fd returns POLLNVAL");
     } else {
-        fail("poll: invalid fd returns POLLNVAL");
+        cat.fail("poll: invalid fd returns POLLNVAL");
     }
 
     // 2. Poll with negative fd (-1 should be ignored)
     pollfds[0] = Pollfd { fd: -1, events: POLLIN, revents: 0 };
     let ret = unsafe { syscall3(nr::POLL, pollfds.as_mut_ptr() as u64, 1, 0) };
     if ret == 0 {
-        pass("poll: fd=-1 is ignored");
+        cat.pass("poll: fd=-1 is ignored");
     } else {
-        fail("poll: fd=-1 is ignored");
+        cat.fail("poll: fd=-1 is ignored");
     }
 
     // 3. Poll with nfds=0 (should succeed immediately)
     let ret = unsafe { syscall3(nr::POLL, 0, 0, 0) };
     if ret == 0 {
-        pass("poll: nfds=0 returns 0");
+        cat.pass("poll: nfds=0 returns 0");
     } else {
-        fail_errno("poll: nfds=0 returns 0", 0, ret);
+        cat.fail_errno("poll: nfds=0 returns 0", 0, ret);
     }
 
     // 4. Poll with bad pointer (won't crash, but may return EFAULT)
@@ -173,7 +174,7 @@ pub fn test_poll_negative() {
 
     // 5. Mix valid and invalid fds
     let Some((read_fd, write_fd)) = create_pipe() else {
-        fail("poll negative: pipe setup");
+        cat.fail("poll negative: pipe setup");
         return;
     };
     let mut pollfds2 = [
@@ -182,19 +183,19 @@ pub fn test_poll_negative() {
     ];
     let ret = unsafe { syscall3(nr::POLL, pollfds2.as_mut_ptr() as u64, 2, 0) };
     if ret == 1 && (pollfds2[1].revents & POLLNVAL) != 0 {
-        pass("poll: mixed valid/invalid fds handled");
+        cat.pass("poll: mixed valid/invalid fds handled");
     } else {
-        fail("poll: mixed valid/invalid fds handled");
+        cat.fail("poll: mixed valid/invalid fds handled");
     }
 
     close_pipe(read_fd, write_fd);
 }
 
-pub fn test_poll_boundary() {
-    write_str("\n=== Poll: boundary tests ===\n");
+pub fn test_poll_boundary(cat: &mut TestCategory) {
+    cat.header();
 
     let Some((read_fd, write_fd)) = create_pipe() else {
-        fail("poll boundary: pipe setup");
+        cat.fail("poll boundary: pipe setup");
         return;
     };
 
@@ -202,18 +203,18 @@ pub fn test_poll_boundary() {
     let mut pollfds = [Pollfd { fd: read_fd, events: 0, revents: 0 }];
     let ret = unsafe { syscall3(nr::POLL, pollfds.as_mut_ptr() as u64, 1, 0) };
     if ret == 0 {
-        pass("poll: events=0 returns 0");
+        cat.pass("poll: events=0 returns 0");
     } else {
-        fail("poll: events=0 returns 0");
+        cat.fail("poll: events=0 returns 0");
     }
 
     // 2. All event flags
     pollfds[0] = Pollfd { fd: write_fd, events: POLLIN | POLLOUT | POLLPRI | POLLRDNORM | POLLWRNORM, revents: 0 };
     let ret = unsafe { syscall3(nr::POLL, pollfds.as_mut_ptr() as u64, 1, 0) };
     if ret >= 0 {
-        pass("poll: all event flags accepted");
+        cat.pass("poll: all event flags accepted");
     } else {
-        fail("poll: all event flags accepted");
+        cat.fail("poll: all event flags accepted");
     }
 
     // 3. Maximum reasonable nfds (test with 16)
@@ -224,9 +225,9 @@ pub fn test_poll_boundary() {
     }
     let ret = unsafe { syscall3(nr::POLL, many_fds.as_mut_ptr() as u64, 16, 0) };
     if ret >= 0 {
-        pass("poll: 16 fds handled");
+        cat.pass("poll: 16 fds handled");
     } else {
-        fail("poll: 16 fds handled");
+        cat.fail("poll: 16 fds handled");
     }
 
     // 4. Timeout edge cases
@@ -234,9 +235,9 @@ pub fn test_poll_boundary() {
     pollfds[0] = Pollfd { fd: read_fd, events: POLLIN, revents: 0 };
     let ret = unsafe { syscall3(nr::POLL, pollfds.as_mut_ptr() as u64, 1, 0) };
     if ret == 0 {
-        pass("poll: timeout=0 (immediate)");
+        cat.pass("poll: timeout=0 (immediate)");
     } else {
-        fail("poll: timeout=0 (immediate)");
+        cat.fail("poll: timeout=0 (immediate)");
     }
 
     // Large timeout (but we have ready fd)
@@ -244,9 +245,9 @@ pub fn test_poll_boundary() {
     pollfds[0] = Pollfd { fd: read_fd, events: POLLIN, revents: 0 };
     let ret = unsafe { syscall3(nr::POLL, pollfds.as_mut_ptr() as u64, 1, 60000) }; // 60 seconds
     if ret >= 1 && (pollfds[0].revents & POLLIN) != 0 {
-        pass("poll: large timeout with ready fd returns immediately");
+        cat.pass("poll: large timeout with ready fd returns immediately");
     } else {
-        fail("poll: large timeout with ready fd returns immediately");
+        cat.fail("poll: large timeout with ready fd returns immediately");
     }
 
     close_pipe(read_fd, write_fd);
@@ -256,11 +257,11 @@ pub fn test_poll_boundary() {
 // Select tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_select_positive() {
-    write_str("\n=== Select: positive tests ===\n");
+pub fn test_select_positive(cat: &mut TestCategory) {
+    cat.header();
 
     let Some((read_fd, write_fd)) = create_pipe() else {
-        fail("select positive: pipe setup");
+        cat.fail("select positive: pipe setup");
         return;
     };
 
@@ -276,9 +277,9 @@ pub fn test_select_positive() {
                  &mut tv as *mut _ as u64)
     };
     if ret == 0 {
-        pass("select: empty pipe read timeout");
+        cat.pass("select: empty pipe read timeout");
     } else {
-        fail_errno("select: empty pipe read timeout", 0, ret);
+        cat.fail_errno("select: empty pipe read timeout", 0, ret);
     }
 
     // 2. Select on pipe write - should be ready
@@ -288,9 +289,9 @@ pub fn test_select_positive() {
                  &mut tv as *mut _ as u64)
     };
     if ret >= 1 && (writefds & (1 << write_fd_u)) != 0 {
-        pass("select: pipe write ready");
+        cat.pass("select: pipe write ready");
     } else {
-        fail("select: pipe write ready");
+        cat.fail("select: pipe write ready");
     }
 
     // 3. Write to pipe, select on read
@@ -301,9 +302,9 @@ pub fn test_select_positive() {
                  &mut tv as *mut _ as u64)
     };
     if ret >= 1 && (readfds & (1 << read_fd_u)) != 0 {
-        pass("select: pipe read ready after write");
+        cat.pass("select: pipe read ready after write");
     } else {
-        fail("select: pipe read ready after write");
+        cat.fail("select: pipe read ready after write");
     }
 
     // 4. Select with readfds and writefds
@@ -314,9 +315,9 @@ pub fn test_select_positive() {
                  &mut writefds as *mut _ as u64, 0, &mut tv as *mut _ as u64)
     };
     if ret >= 1 {
-        pass("select: readfds and writefds");
+        cat.pass("select: readfds and writefds");
     } else {
-        fail("select: readfds and writefds");
+        cat.fail("select: readfds and writefds");
     }
 
     // 5. Select with timeout (1ms)
@@ -329,9 +330,9 @@ pub fn test_select_positive() {
                  &mut tv as *mut _ as u64)
     };
     if ret == 0 {
-        pass("select: 1ms timeout");
+        cat.pass("select: 1ms timeout");
     } else {
-        fail("select: 1ms timeout");
+        cat.fail("select: 1ms timeout");
     }
 
     // 6. Select with NULL timeout and ready fd
@@ -341,19 +342,19 @@ pub fn test_select_positive() {
         syscall5(nr::SELECT, nfds, &mut readfds as *mut _ as u64, 0, 0, 0)
     };
     if ret >= 1 {
-        pass("select: NULL timeout with ready fd");
+        cat.pass("select: NULL timeout with ready fd");
     } else {
-        fail("select: NULL timeout with ready fd");
+        cat.fail("select: NULL timeout with ready fd");
     }
 
     close_pipe(read_fd, write_fd);
 }
 
-pub fn test_select_negative() {
-    write_str("\n=== Select: negative tests ===\n");
+pub fn test_select_negative(cat: &mut TestCategory) {
+    cat.header();
 
     let Some((read_fd, write_fd)) = create_pipe() else {
-        fail("select negative: pipe setup");
+        cat.fail("select negative: pipe setup");
         return;
     };
 
@@ -366,9 +367,9 @@ pub fn test_select_negative() {
         syscall5(nr::SELECT, 0, 0, 0, 0, &mut tv as *mut _ as u64)
     };
     if ret == 0 {
-        pass("select: nfds=0 returns 0");
+        cat.pass("select: nfds=0 returns 0");
     } else {
-        fail_errno("select: nfds=0 returns 0", 0, ret);
+        cat.fail_errno("select: nfds=0 returns 0", 0, ret);
     }
 
     // 2. Negative timeout values are treated as zero on some systems
@@ -381,9 +382,9 @@ pub fn test_select_negative() {
     };
     // Accept either EINVAL or timeout (0)
     if ret == EINVAL || ret == 0 {
-        pass("select: negative tv_sec handled");
+        cat.pass("select: negative tv_sec handled");
     } else {
-        fail_errno("select: negative tv_sec handled", 0, ret);
+        cat.fail_errno("select: negative tv_sec handled", 0, ret);
     }
 
     // 3. Invalid tv_usec (>= 1000000)
@@ -394,10 +395,10 @@ pub fn test_select_negative() {
                  &mut tv as *mut _ as u64)
     };
     if ret == EINVAL {
-        pass("select: invalid tv_usec returns EINVAL");
+        cat.pass("select: invalid tv_usec returns EINVAL");
     } else {
         // Some kernels accept this
-        pass("select: invalid tv_usec handled");
+        cat.pass("select: invalid tv_usec handled");
     }
 
     close_pipe(read_fd, write_fd);
@@ -408,11 +409,11 @@ pub fn test_select_negative() {
 // ppoll tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_ppoll() {
-    write_str("\n=== Ppoll: tests ===\n");
+pub fn test_ppoll(cat: &mut TestCategory) {
+    cat.header();
 
     let Some((read_fd, write_fd)) = create_pipe() else {
-        fail("ppoll: pipe setup");
+        cat.fail("ppoll: pipe setup");
         return;
     };
 
@@ -424,9 +425,9 @@ pub fn test_ppoll() {
                  &ts as *const _ as u64, 0, 8)
     };
     if ret == 0 {
-        pass("ppoll: timeout with no data");
+        cat.pass("ppoll: timeout with no data");
     } else {
-        fail_errno("ppoll: timeout with no data", 0, ret);
+        cat.fail_errno("ppoll: timeout with no data", 0, ret);
     }
 
     // 2. ppoll with data ready
@@ -437,9 +438,9 @@ pub fn test_ppoll() {
                  &ts as *const _ as u64, 0, 8)
     };
     if ret >= 1 && (pollfds[0].revents & POLLIN) != 0 {
-        pass("ppoll: returns when ready");
+        cat.pass("ppoll: returns when ready");
     } else {
-        fail("ppoll: returns when ready");
+        cat.fail("ppoll: returns when ready");
     }
 
     // 3. ppoll with NULL timeout (immediate with ready fd)
@@ -448,9 +449,9 @@ pub fn test_ppoll() {
         syscall5(nr::PPOLL, pollfds.as_mut_ptr() as u64, 1, 0, 0, 8)
     };
     if ret >= 1 {
-        pass("ppoll: NULL timeout with ready fd");
+        cat.pass("ppoll: NULL timeout with ready fd");
     } else {
-        fail("ppoll: NULL timeout with ready fd");
+        cat.fail("ppoll: NULL timeout with ready fd");
     }
 
     close_pipe(read_fd, write_fd);
@@ -460,11 +461,11 @@ pub fn test_ppoll() {
 // pselect tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_pselect() {
-    write_str("\n=== Pselect: tests ===\n");
+pub fn test_pselect(cat: &mut TestCategory) {
+    cat.header();
 
     let Some((read_fd, write_fd)) = create_pipe() else {
-        fail("pselect: pipe setup");
+        cat.fail("pselect: pipe setup");
         return;
     };
 
@@ -479,9 +480,9 @@ pub fn test_pselect() {
                  &ts as *const _ as u64, 0)
     };
     if ret == 0 {
-        pass("pselect6: timeout with no data");
+        cat.pass("pselect6: timeout with no data");
     } else {
-        fail_errno("pselect6: timeout with no data", 0, ret);
+        cat.fail_errno("pselect6: timeout with no data", 0, ret);
     }
 
     // 2. pselect6 with data ready
@@ -492,9 +493,9 @@ pub fn test_pselect() {
                  &ts as *const _ as u64, 0)
     };
     if ret >= 1 && (readfds & (1 << read_fd_u)) != 0 {
-        pass("pselect6: returns when ready");
+        cat.pass("pselect6: returns when ready");
     } else {
-        fail("pselect6: returns when ready");
+        cat.fail("pselect6: returns when ready");
     }
 
     close_pipe(read_fd, write_fd);
@@ -504,19 +505,37 @@ pub fn test_pselect() {
 // Module entry point
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn run_all() {
+pub fn run_all(results: &mut crate::Results) {
     crate::write_banner("POLL/SELECT TESTS (PSE51/PSE53)");
 
     // Poll tests
-    test_poll_positive();
-    test_poll_negative();
-    test_poll_boundary();
+    let mut cat = TestCategory::new(PseLevel::PSE53, "Poll: positive tests");
+    test_poll_positive(&mut cat);
+    results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE53, "Poll: negative tests");
+    test_poll_negative(&mut cat);
+    results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE53, "Poll: boundary tests");
+    test_poll_boundary(&mut cat);
+    results.add(cat);
 
     // Select tests
-    test_select_positive();
-    test_select_negative();
+    let mut cat = TestCategory::new(PseLevel::PSE53, "Select: positive tests");
+    test_select_positive(&mut cat);
+    results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE53, "Select: negative tests");
+    test_select_negative(&mut cat);
+    results.add(cat);
 
     // Extended poll/select variants
-    test_ppoll();
-    test_pselect();
+    let mut cat = TestCategory::new(PseLevel::PSE53, "Ppoll: tests");
+    test_ppoll(&mut cat);
+    results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE53, "Pselect: tests");
+    test_pselect(&mut cat);
+    results.add(cat);
 }

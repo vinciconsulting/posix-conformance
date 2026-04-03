@@ -16,7 +16,7 @@
 
 use core::arch::asm;
 use core::panic::PanicInfo;
-use core::sync::atomic::{AtomicU32, Ordering::Relaxed, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 mod memory_tests;
 mod pipe_tests;
@@ -382,6 +382,185 @@ pub fn write_banner(msg: &str) {
 // Test framework
 // ════════════════════════════════════════════════════════════════════════════
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PseLevel {
+    PSE51,
+    PSE52,
+    PSE53,
+}
+
+pub struct TestCategory {
+    pub level: PseLevel,
+    pub name: &'static str,
+    pub passed: u32,
+    pub failed: u32,
+    pub skipped: u32,
+}
+
+impl TestCategory {
+    pub fn new(level: PseLevel, name: &'static str) -> Self {
+        Self { level, name, passed: 0, failed: 0, skipped: 0 }
+    }
+
+    pub fn header(&self) {
+        write_str("\n=== ");
+        write_str(self.name);
+        write_str(" ===\n");
+    }
+
+    pub fn pass(&mut self, name: &str) {
+        write_str("  [PASS] ");
+        write_str(name);
+        write_str("\n");
+        self.passed += 1;
+    }
+
+    pub fn fail(&mut self, name: &str) {
+        write_str("  [FAIL] ");
+        write_str(name);
+        write_str("\n");
+        self.failed += 1;
+    }
+
+    pub fn fail_expected(&mut self, name: &str, expected: u64, got: u64) {
+        write_str("  [FAIL] ");
+        write_str(name);
+        write_str(" (expected ");
+        write_hex(expected);
+        write_str(", got ");
+        write_hex(got);
+        write_str(")\n");
+        self.failed += 1;
+    }
+
+    pub fn fail_errno(&mut self, name: &str, expected: i64, got: i64) {
+        write_str("  [FAIL] ");
+        write_str(name);
+        write_str(" (expected ");
+        write_num(expected);
+        write_str(", got ");
+        write_num(got);
+        write_str(")\n");
+        self.failed += 1;
+    }
+
+    pub fn check(&mut self, name: &str, condition: bool) {
+        if condition { self.pass(name); } else { self.fail(name); }
+    }
+
+    pub fn check_errno(&mut self, name: &str, got: i64, expected: i64) {
+        if got == expected {
+            self.pass(name);
+        } else {
+            self.fail_errno(name, expected, got);
+        }
+    }
+
+    pub fn skip(&mut self, name: &str) {
+        write_str("  [SKIP] ");
+        write_str(name);
+        write_str("\n");
+        self.skipped += 1;
+    }
+}
+
+pub struct Results {
+    categories: [Option<(PseLevel, &'static str, u32, u32, u32)>; 64],
+    count: usize,
+}
+
+impl Results {
+    pub fn new() -> Self {
+        Self { categories: [None; 64], count: 0 }
+    }
+
+    pub fn add(&mut self, cat: TestCategory) {
+        if self.count < 64 {
+            self.categories[self.count] = Some((cat.level, cat.name, cat.passed, cat.failed, cat.skipped));
+            self.count += 1;
+        }
+    }
+
+    fn level_totals(&self, level: PseLevel) -> (u32, u32, u32) {
+        let (mut p, mut f, mut s) = (0u32, 0u32, 0u32);
+        for i in 0..self.count {
+            if let Some((l, _, passed, failed, skipped)) = self.categories[i] {
+                if l == level { p += passed; f += failed; s += skipped; }
+            }
+        }
+        (p, f, s)
+    }
+
+    pub fn summary(&self) {
+        write_str("\n════════════════════════════════════════════════════════════\n");
+
+        let (mut total_p, mut total_f, mut total_s) = (0u32, 0u32, 0u32);
+
+        for &(level, label) in &[
+            (PseLevel::PSE51, "PSE51"),
+            (PseLevel::PSE52, "PSE52"),
+            (PseLevel::PSE53, "PSE53"),
+        ] {
+            let (p, f, s) = self.level_totals(level);
+            if p + f + s == 0 { continue; }
+            let total = p + f;
+            write_str(label);
+            write_str(": ");
+            write_num(p as i64);
+            write_str("/");
+            write_num(total as i64);
+            if total > 0 {
+                write_str(" (");
+                write_num((p as i64 * 100) / total as i64);
+                write_str("%)");
+            }
+            if s > 0 {
+                write_str(", ");
+                write_num(s as i64);
+                write_str(" skipped");
+            }
+            write_str("\n");
+            total_p += p;
+            total_f += f;
+            total_s += s;
+        }
+
+        let total = total_p + total_f;
+        write_str("TOTAL: ");
+        write_num(total_p as i64);
+        write_str("/");
+        write_num(total as i64);
+        if total > 0 {
+            write_str(" (");
+            write_num((total_p as i64 * 100) / total as i64);
+            write_str("%)");
+        }
+        if total_s > 0 {
+            write_str(", ");
+            write_num(total_s as i64);
+            write_str(" skipped");
+        }
+        write_str("\n");
+
+        write_str("════════════════════════════════════════════════════════════\n");
+
+        if total_f == 0 {
+            write_str("\nALL TESTS PASSED\n");
+        } else {
+            write_str("\nSOME TESTS FAILED\n");
+        }
+    }
+
+    pub fn exit_code(&self) -> u64 {
+        let total_f = self.level_totals(PseLevel::PSE51).1
+            + self.level_totals(PseLevel::PSE52).1
+            + self.level_totals(PseLevel::PSE53).1;
+        if total_f == 0 { 0 } else { 1 }
+    }
+}
+
+// Keep legacy free functions that delegate to a global — needed during migration.
+// Modules that haven't been migrated yet can still call pass()/fail().
 static PASS: AtomicU32 = AtomicU32::new(0);
 static FAIL: AtomicU32 = AtomicU32::new(0);
 
@@ -449,8 +628,9 @@ pub struct Pollfd {
 // PSE51: TLS - SET FS BASE AND USE IT
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_tls_fs_relative() {
-    write_str("\n=== TLS: arch_prctl + FS-relative access ===\n");
+fn test_tls_fs_relative(results: &mut Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "TLS: arch_prctl + FS-relative access");
+    cat.header();
 
     const ARCH_SET_FS: u64 = 0x1002;
     const ARCH_GET_FS: u64 = 0x1003;
@@ -475,20 +655,20 @@ fn test_tls_fs_relative() {
     let tls_addr = &mut tls as *mut TlsBlock as u64;
     let ret = unsafe { syscall2(nr::ARCH_PRCTL, ARCH_SET_FS, tls_addr) };
     if ret != 0 {
-        fail("arch_prctl(SET_FS) returns 0");
+        cat.fail("arch_prctl(SET_FS) returns 0");
         return;
     }
-    pass("arch_prctl(SET_FS) returns 0");
+    cat.pass("arch_prctl(SET_FS) returns 0");
 
     // 3. GET_FS should return the same address
     let mut fs_base: u64 = 0;
     let ret = unsafe { syscall2(nr::ARCH_PRCTL, ARCH_GET_FS, &mut fs_base as *mut u64 as u64) };
     if ret != 0 {
-        fail("arch_prctl(GET_FS) returns 0");
+        cat.fail("arch_prctl(GET_FS) returns 0");
     } else if fs_base != tls_addr {
-        fail_expected("GET_FS returns SET_FS value", tls_addr, fs_base);
+        cat.fail_expected("GET_FS returns SET_FS value", tls_addr, fs_base);
     } else {
-        pass("GET_FS returns SET_FS value");
+        cat.pass("GET_FS returns SET_FS value");
     }
 
     // 4. Access memory via FS-relative addressing (this is what libc does)
@@ -504,27 +684,27 @@ fn test_tls_fs_relative() {
     }
 
     if val0 == 0xAAAA_BBBB_CCCC_DDDD {
-        pass("fs:[0] reads correct value");
+        cat.pass("fs:[0] reads correct value");
     } else {
-        fail_expected("fs:[0] reads correct value", 0xAAAA_BBBB_CCCC_DDDD, val0);
+        cat.fail_expected("fs:[0] reads correct value", 0xAAAA_BBBB_CCCC_DDDD, val0);
     }
 
     if val1 == 0x1111_2222_3333_4444 {
-        pass("fs:[8] reads correct value");
+        cat.pass("fs:[8] reads correct value");
     } else {
-        fail_expected("fs:[8] reads correct value", 0x1111_2222_3333_4444, val1);
+        cat.fail_expected("fs:[8] reads correct value", 0x1111_2222_3333_4444, val1);
     }
 
     if val2 == 0x5555_6666_7777_8888 {
-        pass("fs:[16] reads correct value");
+        cat.pass("fs:[16] reads correct value");
     } else {
-        fail_expected("fs:[16] reads correct value", 0x5555_6666_7777_8888, val2);
+        cat.fail_expected("fs:[16] reads correct value", 0x5555_6666_7777_8888, val2);
     }
 
     if val3 == 0x9999_AAAA_BBBB_CCCC {
-        pass("fs:[24] reads correct value");
+        cat.pass("fs:[24] reads correct value");
     } else {
-        fail_expected("fs:[24] reads correct value", 0x9999_AAAA_BBBB_CCCC, val3);
+        cat.fail_expected("fs:[24] reads correct value", 0x9999_AAAA_BBBB_CCCC, val3);
     }
 
     // 5. Write via FS-relative addressing
@@ -534,10 +714,11 @@ fn test_tls_fs_relative() {
 
     // 6. Verify the TLS block was modified
     if tls.val0 == 0xDEAD_BEEF {
-        pass("fs:[0] write modifies TLS block");
+        cat.pass("fs:[0] write modifies TLS block");
     } else {
-        fail_expected("fs:[0] write modifies TLS block", 0xDEAD_BEEF, tls.val0);
+        cat.fail_expected("fs:[0] write modifies TLS block", 0xDEAD_BEEF, tls.val0);
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -548,45 +729,32 @@ fn test_tls_fs_relative() {
 const FUTEX_WAIT: u64 = 0;
 const FUTEX_WAKE: u64 = 1;
 
-fn test_futex_wake_no_waiters() {
-    write_str("\n=== Futex: wake with no waiters ===\n");
+fn test_futex(results: &mut Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Futex");
+    cat.header();
 
     let futex_word: AtomicU32 = AtomicU32::new(0);
     let ret = unsafe {
         syscall6(nr::FUTEX, &futex_word as *const _ as u64, FUTEX_WAKE, 1, 0, 0, 0)
     };
-    // Should return 0 (no waiters woken)
-    if ret == 0 {
-        pass("futex(WAKE) with no waiters returns 0");
-    } else {
-        fail("futex(WAKE) with no waiters returns 0");
-    }
-}
-
-fn test_futex_wait_wrong_value() {
-    write_str("\n=== Futex: wait with wrong expected value ===\n");
+    cat.check("futex(WAKE) with no waiters returns 0", ret == 0);
 
     let futex_word: AtomicU32 = AtomicU32::new(42);
-    // Wait expecting 0, but value is 42 -> should return -EAGAIN immediately
     let ret = unsafe {
         syscall6(nr::FUTEX, &futex_word as *const _ as u64, FUTEX_WAIT, 0, 0, 0, 0)
     };
-    if ret == -11 { // -EAGAIN
-        pass("futex(WAIT) wrong value returns -EAGAIN");
-    } else {
-        fail("futex(WAIT) wrong value returns -EAGAIN");
-        write_str("    (got ");
-        write_num(ret);
-        write_str(")\n");
-    }
+    cat.check_errno("futex(WAIT) wrong value returns -EAGAIN", ret, -11);
+
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Standard File Descriptors (fd 0/1/2) - POSIX requires these pre-open
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_standard_fds() {
-    write_str("\n=== Standard FDs: fd 0/1/2 ===\n");
+fn test_standard_fds(results: &mut Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Standard FDs: fd 0/1/2");
+    cat.header();
 
     const FSTAT: u64 = 5;
 
@@ -619,43 +787,43 @@ fn test_standard_fds() {
     let mut stat = core::mem::MaybeUninit::<Stat>::uninit();
     let ret = unsafe { syscall2(FSTAT, 0, stat.as_mut_ptr() as u64) };
     if ret == 0 {
-        pass("fstat(stdin) returns 0");
+        cat.pass("fstat(stdin) returns 0");
     } else {
-        fail("fstat(stdin) returns 0");
+        cat.fail("fstat(stdin) returns 0");
     }
 
     // 2. fstat(1) - stdout should exist (POSIX requires fd 1 be open)
     let mut stat = core::mem::MaybeUninit::<Stat>::uninit();
     let ret = unsafe { syscall2(FSTAT, 1, stat.as_mut_ptr() as u64) };
     if ret == 0 {
-        pass("fstat(stdout) returns 0");
+        cat.pass("fstat(stdout) returns 0");
     } else {
-        fail("fstat(stdout) returns 0");
+        cat.fail("fstat(stdout) returns 0");
     }
 
     // 3. fstat(2) - stderr should exist (POSIX requires fd 2 be open)
     let mut stat = core::mem::MaybeUninit::<Stat>::uninit();
     let ret = unsafe { syscall2(FSTAT, 2, stat.as_mut_ptr() as u64) };
     if ret == 0 {
-        pass("fstat(stderr) returns 0");
+        cat.pass("fstat(stderr) returns 0");
     } else {
-        fail("fstat(stderr) returns 0");
+        cat.fail("fstat(stderr) returns 0");
     }
 
     // 4. Write to stdout (already tested implicitly, but explicit)
     let ret = unsafe { syscall3(nr::WRITE, 1, b"    (stdout write test)\n".as_ptr() as u64, 24) };
     if ret == 24 {
-        pass("write(stdout) returns count");
+        cat.pass("write(stdout) returns count");
     } else {
-        fail("write(stdout) returns count");
+        cat.fail("write(stdout) returns count");
     }
 
     // 5. Write to stderr
     let ret = unsafe { syscall3(nr::WRITE, 2, b"    (stderr write test)\n".as_ptr() as u64, 24) };
     if ret == 24 {
-        pass("write(stderr) returns count");
+        cat.pass("write(stderr) returns count");
     } else {
-        fail("write(stderr) returns count");
+        cat.fail("write(stderr) returns count");
     }
 
     // 6. Read from stdin - should not return EBADF
@@ -664,11 +832,11 @@ fn test_standard_fds() {
     let ret = unsafe { syscall3(nr::READ, 0, buf.as_mut_ptr() as u64, 0) };
     // Zero-length read should return 0, not error
     if ret == 0 {
-        pass("read(stdin, 0) returns 0");
+        cat.pass("read(stdin, 0) returns 0");
     } else if ret == -9 { // -EBADF
-        fail("read(stdin) returns EBADF (fd 0 not initialized)");
+        cat.fail("read(stdin) returns EBADF (fd 0 not initialized)");
     } else {
-        pass("read(stdin, 0) accepted");
+        cat.pass("read(stdin, 0) accepted");
     }
 
     // 7. Verify closing fd 0/1/2 and reopening works correctly
@@ -676,19 +844,20 @@ fn test_standard_fds() {
     // but we verify they can be dup'd which proves they're valid
     let dup_stdin = unsafe { syscall1(nr::DUP, 0) };
     if dup_stdin >= 3 {
-        pass("dup(stdin) returns new fd");
+        cat.pass("dup(stdin) returns new fd");
         unsafe { syscall1(nr::CLOSE, dup_stdin as u64) };
     } else {
-        fail("dup(stdin) returns new fd");
+        cat.fail("dup(stdin) returns new fd");
     }
 
     let dup_stderr = unsafe { syscall1(nr::DUP, 2) };
     if dup_stderr >= 3 {
-        pass("dup(stderr) returns new fd");
+        cat.pass("dup(stderr) returns new fd");
         unsafe { syscall1(nr::CLOSE, dup_stderr as u64) };
     } else {
-        fail("dup(stderr) returns new fd");
+        cat.fail("dup(stderr) returns new fd");
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -716,65 +885,52 @@ extern "C" fn main() -> ! {
     write_str("\n  IEEE 1003.13-2003\n");
     write_str("════════════════════════════════════════════════════════════\n");
 
-    // Standard file descriptors (fd 0/1/2 must be pre-initialized)
-    test_standard_fds();
+    let mut results = Results::new();
 
-    // PSE51: Memory - Comprehensive tests
-    memory_tests::run_all();
+    // PSE51: Standard file descriptors
+    test_standard_fds(&mut results);
+
+    // PSE51: Memory
+    memory_tests::run_all(&mut results);
 
     // PSE51: TLS
-    test_tls_fs_relative();
+    test_tls_fs_relative(&mut results);
 
-    // PSE51: Pipes - Comprehensive tests
-    pipe_tests::run_all();
+    // PSE51: Pipes
+    pipe_tests::run_all(&mut results);
 
-    // PSE51: FD Management - Comprehensive tests
-    fd_tests::run_all();
+    // PSE52: FD Management
+    fd_tests::run_all(&mut results);
 
-    // PSE51: Clocks/Timers - Comprehensive tests
-    time_tests::run_all();
+    // PSE51: Clocks/Timers
+    time_tests::run_all(&mut results);
 
-    // PSE51: Process Identity - Comprehensive tests
-    process_tests::run_all();
+    // PSE51: Process Identity
+    process_tests::run_all(&mut results);
 
     // PSE51: Futex
-    test_futex_wake_no_waiters();
-    test_futex_wait_wrong_value();
+    test_futex(&mut results);
 
-    // PSE52: Sockets - Comprehensive tests
-    socket_tests::run_all();
+    // PSE53: Sockets
+    socket_tests::run_all(&mut results);
 
-    // PSE52: Signals - Comprehensive tests
-    signal_tests::run_all();
+    // PSE51: Signals
+    signal_tests::run_all(&mut results);
 
-    // PSE53: I/O Multiplexing - Comprehensive tests
-    poll_tests::run_all();
+    // PSE53: I/O Multiplexing
+    poll_tests::run_all(&mut results);
 
     // PSE52: Fork/exec/wait
-    fork_tests::run_all();
+    fork_tests::run_all(&mut results);
 
-    // PSE52: Filesystem operations
-    fs_tests::run_all();
+    // PSE52: Filesystem
+    fs_tests::run_all(&mut results);
 
-    // PSE51: Threads (pthread via clone)
-    thread_tests::run_all();
+    // PSE51: Threads
+    thread_tests::run_all(&mut results);
 
-    // Summary
-    write_str("\n════════════════════════════════════════════════════════════\n");
-    write_str("SUMMARY: ");
-    write_num(PASS.load(Relaxed) as i64);
-    write_str(" passed, ");
-    write_num(FAIL.load(Relaxed) as i64);
-    write_str(" failed\n");
-    write_str("════════════════════════════════════════════════════════════\n");
-
-    let exit_code = if FAIL.load(Relaxed) == 0 {
-        write_str("\nALL TESTS PASSED\n");
-        0
-    } else {
-        write_str("\nSOME TESTS FAILED\n");
-        1
-    };
+    results.summary();
+    let exit_code = results.exit_code();
 
     unsafe { syscall1(nr::EXIT_GROUP, exit_code) };
     loop {

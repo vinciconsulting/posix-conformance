@@ -10,7 +10,8 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::nr;
-use crate::{pass, fail, fail_errno, write_str, write_num, syscall0, syscall2, syscall3, syscall4};
+use crate::{write_str, write_num, syscall0, syscall2, syscall3, syscall4};
+
 
 // ════════════════════════════════════════════════════════════════════════════
 // Signal constants
@@ -77,16 +78,16 @@ struct Sigaction {
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Positive tests for sigprocmask
-pub fn test_sigprocmask_positive() {
+pub fn test_sigprocmask_positive(cat: &mut crate::TestCategory) {
     write_str("\n=== Signals: sigprocmask positive ===\n");
 
     // 1. Query current mask (how=0, set=NULL)
     let mut oldset = [0u64; 2];
     let ret = unsafe { syscall4(nr::SIGPROCMASK, 0, 0, oldset.as_mut_ptr() as u64, 8) };
     if ret == 0 {
-        pass("sigprocmask: query current mask");
+        cat.pass("sigprocmask: query current mask");
     } else {
-        fail_errno("sigprocmask: query current mask", 0, ret);
+        cat.fail_errno("sigprocmask: query current mask", 0, ret);
     }
 
     // 2. SIG_BLOCK - add SIGUSR1 to blocked set
@@ -97,18 +98,18 @@ pub fn test_sigprocmask_positive() {
                  saved.as_mut_ptr() as u64, 8)
     };
     if ret == 0 {
-        pass("sigprocmask: SIG_BLOCK SIGUSR1");
+        cat.pass("sigprocmask: SIG_BLOCK SIGUSR1");
     } else {
-        fail_errno("sigprocmask: SIG_BLOCK SIGUSR1", 0, ret);
+        cat.fail_errno("sigprocmask: SIG_BLOCK SIGUSR1", 0, ret);
     }
 
     // 3. Verify SIGUSR1 is blocked
     let mut current = [0u64; 2];
     let ret = unsafe { syscall4(nr::SIGPROCMASK, 0, 0, current.as_mut_ptr() as u64, 8) };
     if ret == 0 && (current[0] & (1 << (SIGUSR1 - 1))) != 0 {
-        pass("sigprocmask: SIGUSR1 verified blocked");
+        cat.pass("sigprocmask: SIGUSR1 verified blocked");
     } else {
-        fail("sigprocmask: SIGUSR1 verified blocked");
+        cat.fail("sigprocmask: SIGUSR1 verified blocked");
     }
 
     // 4. SIG_UNBLOCK - remove SIGUSR1
@@ -116,18 +117,18 @@ pub fn test_sigprocmask_positive() {
         syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &newset as *const _ as u64, 0, 8)
     };
     if ret == 0 {
-        pass("sigprocmask: SIG_UNBLOCK SIGUSR1");
+        cat.pass("sigprocmask: SIG_UNBLOCK SIGUSR1");
     } else {
-        fail_errno("sigprocmask: SIG_UNBLOCK SIGUSR1", 0, ret);
+        cat.fail_errno("sigprocmask: SIG_UNBLOCK SIGUSR1", 0, ret);
     }
 
     // 5. Verify SIGUSR1 is unblocked
     let mut current = [0u64; 2];
     let ret = unsafe { syscall4(nr::SIGPROCMASK, 0, 0, current.as_mut_ptr() as u64, 8) };
     if ret == 0 && (current[0] & (1 << (SIGUSR1 - 1))) == 0 {
-        pass("sigprocmask: SIGUSR1 verified unblocked");
+        cat.pass("sigprocmask: SIGUSR1 verified unblocked");
     } else {
-        fail("sigprocmask: SIGUSR1 verified unblocked");
+        cat.fail("sigprocmask: SIGUSR1 verified unblocked");
     }
 
     // 6. SIG_SETMASK - set entire mask
@@ -136,9 +137,9 @@ pub fn test_sigprocmask_positive() {
         syscall4(nr::SIGPROCMASK, SIG_SETMASK, &fullset as *const _ as u64, 0, 8)
     };
     if ret == 0 {
-        pass("sigprocmask: SIG_SETMASK multiple signals");
+        cat.pass("sigprocmask: SIG_SETMASK multiple signals");
     } else {
-        fail_errno("sigprocmask: SIG_SETMASK multiple signals", 0, ret);
+        cat.fail_errno("sigprocmask: SIG_SETMASK multiple signals", 0, ret);
     }
 
     // 7. Verify multiple signals blocked
@@ -146,9 +147,9 @@ pub fn test_sigprocmask_positive() {
     let ret = unsafe { syscall4(nr::SIGPROCMASK, 0, 0, current.as_mut_ptr() as u64, 8) };
     let expected = (1 << (SIGUSR1 - 1)) | (1 << (SIGUSR2 - 1)) | (1 << (SIGALRM - 1));
     if ret == 0 && (current[0] & expected) == expected {
-        pass("sigprocmask: multiple signals verified blocked");
+        cat.pass("sigprocmask: multiple signals verified blocked");
     } else {
-        fail("sigprocmask: multiple signals verified blocked");
+        cat.fail("sigprocmask: multiple signals verified blocked");
     }
 
     // 8. Restore original mask
@@ -156,9 +157,9 @@ pub fn test_sigprocmask_positive() {
         syscall4(nr::SIGPROCMASK, SIG_SETMASK, saved.as_ptr() as u64, 0, 8)
     };
     if ret == 0 {
-        pass("sigprocmask: restore original mask");
+        cat.pass("sigprocmask: restore original mask");
     } else {
-        fail_errno("sigprocmask: restore original mask", 0, ret);
+        cat.fail_errno("sigprocmask: restore original mask", 0, ret);
     }
 
     // 9. Block all blockable signals (except SIGKILL, SIGSTOP)
@@ -168,9 +169,9 @@ pub fn test_sigprocmask_positive() {
                  saved.as_mut_ptr() as u64, 8)
     };
     if ret == 0 {
-        pass("sigprocmask: block all blockable signals");
+        cat.pass("sigprocmask: block all blockable signals");
     } else {
-        fail_errno("sigprocmask: block all blockable signals", 0, ret);
+        cat.fail_errno("sigprocmask: block all blockable signals", 0, ret);
     }
 
     // Restore
@@ -178,7 +179,7 @@ pub fn test_sigprocmask_positive() {
 }
 
 /// Negative tests for sigprocmask
-pub fn test_sigprocmask_negative() {
+pub fn test_sigprocmask_negative(cat: &mut crate::TestCategory) {
     write_str("\n=== Signals: sigprocmask negative ===\n");
 
     // 1. Invalid "how" value
@@ -187,9 +188,9 @@ pub fn test_sigprocmask_negative() {
         syscall4(nr::SIGPROCMASK, 999, &newset as *const _ as u64, 0, 8)
     };
     if ret == EINVAL {
-        pass("sigprocmask: invalid 'how' returns EINVAL");
+        cat.pass("sigprocmask: invalid 'how' returns EINVAL");
     } else {
-        fail_errno("sigprocmask: invalid 'how' returns EINVAL", EINVAL, ret);
+        cat.fail_errno("sigprocmask: invalid 'how' returns EINVAL", EINVAL, ret);
     }
 
     // 2. Invalid sigsetsize (too small)
@@ -197,9 +198,9 @@ pub fn test_sigprocmask_negative() {
         syscall4(nr::SIGPROCMASK, 0, 0, 0, 4)  // should be 8
     };
     if ret == EINVAL {
-        pass("sigprocmask: invalid sigsetsize returns EINVAL");
+        cat.pass("sigprocmask: invalid sigsetsize returns EINVAL");
     } else {
-        fail_errno("sigprocmask: invalid sigsetsize returns EINVAL", EINVAL, ret);
+        cat.fail_errno("sigprocmask: invalid sigsetsize returns EINVAL", EINVAL, ret);
     }
 
     // 3. Try to block SIGKILL (kernel ignores this, but syscall returns 0)
@@ -209,9 +210,9 @@ pub fn test_sigprocmask_negative() {
     };
     // syscall should succeed even though kernel will ignore SIGKILL blocking
     if ret == 0 {
-        pass("sigprocmask: SIG_BLOCK SIGKILL accepted (kernel ignores)");
+        cat.pass("sigprocmask: SIG_BLOCK SIGKILL accepted (kernel ignores)");
     } else {
-        fail_errno("sigprocmask: SIG_BLOCK SIGKILL accepted", 0, ret);
+        cat.fail_errno("sigprocmask: SIG_BLOCK SIGKILL accepted", 0, ret);
     }
 
     // Note: Whether the mask shows SIGKILL bit is implementation-defined.
@@ -224,14 +225,14 @@ pub fn test_sigprocmask_negative() {
         syscall4(nr::SIGPROCMASK, SIG_BLOCK, &stopmask as *const _ as u64, 0, 8)
     };
     if ret == 0 {
-        pass("sigprocmask: SIG_BLOCK SIGSTOP accepted (kernel ignores)");
+        cat.pass("sigprocmask: SIG_BLOCK SIGSTOP accepted (kernel ignores)");
     } else {
-        fail_errno("sigprocmask: SIG_BLOCK SIGSTOP accepted", 0, ret);
+        cat.fail_errno("sigprocmask: SIG_BLOCK SIGSTOP accepted", 0, ret);
     }
 }
 
 /// Positive tests for kill
-pub fn test_kill_positive() {
+pub fn test_kill_positive(cat: &mut crate::TestCategory) {
     write_str("\n=== Signals: kill positive ===\n");
 
     let pid = unsafe { syscall0(nr::GETPID) };
@@ -239,17 +240,17 @@ pub fn test_kill_positive() {
     // 1. Signal 0 - process existence check (should succeed for self)
     let ret = unsafe { syscall2(nr::KILL, pid as u64, 0) };
     if ret == 0 {
-        pass("kill(self, 0): process exists");
+        cat.pass("kill(self, 0): process exists");
     } else {
-        fail_errno("kill(self, 0): process exists", 0, ret);
+        cat.fail_errno("kill(self, 0): process exists", 0, ret);
     }
 
     // 2. Signal 0 to process group (pid=0)
     let ret = unsafe { syscall2(nr::KILL, 0, 0) };
     if ret == 0 {
-        pass("kill(0, 0): process group check");
+        cat.pass("kill(0, 0): process group check");
     } else {
-        fail_errno("kill(0, 0): process group check", 0, ret);
+        cat.fail_errno("kill(0, 0): process group check", 0, ret);
     }
 
     // 3. Signal 0 to all processes (pid=-1, requires CAP_KILL usually)
@@ -257,7 +258,7 @@ pub fn test_kill_positive() {
 }
 
 /// Negative tests for kill
-pub fn test_kill_negative() {
+pub fn test_kill_negative(cat: &mut crate::TestCategory) {
     write_str("\n=== Signals: kill negative ===\n");
 
     let pid = unsafe { syscall0(nr::GETPID) };
@@ -265,25 +266,25 @@ pub fn test_kill_negative() {
     // 1. Invalid signal number (> 64)
     let ret = unsafe { syscall2(nr::KILL, pid as u64, 999) };
     if ret == EINVAL {
-        pass("kill: invalid signal 999 returns EINVAL");
+        cat.pass("kill: invalid signal 999 returns EINVAL");
     } else {
-        fail_errno("kill: invalid signal 999 returns EINVAL", EINVAL, ret);
+        cat.fail_errno("kill: invalid signal 999 returns EINVAL", EINVAL, ret);
     }
 
     // 2. Negative signal number
     let ret = unsafe { syscall2(nr::KILL, pid as u64, (-1i64) as u64) };
     if ret == EINVAL {
-        pass("kill: negative signal returns EINVAL");
+        cat.pass("kill: negative signal returns EINVAL");
     } else {
-        fail_errno("kill: negative signal returns EINVAL", EINVAL, ret);
+        cat.fail_errno("kill: negative signal returns EINVAL", EINVAL, ret);
     }
 
     // 3. Non-existent process (large PID)
     let ret = unsafe { syscall2(nr::KILL, 0x7FFFFFFF, 0) };
     if ret == ESRCH {
-        pass("kill: non-existent PID returns ESRCH");
+        cat.pass("kill: non-existent PID returns ESRCH");
     } else {
-        fail_errno("kill: non-existent PID returns ESRCH", ESRCH, ret);
+        cat.fail_errno("kill: non-existent PID returns ESRCH", ESRCH, ret);
     }
 
     // 4. Invalid PID (negative, not -1)
@@ -291,24 +292,24 @@ pub fn test_kill_negative() {
     // -2 means "all processes in process group |pid|" which would be group 2
     // This might return ESRCH if no such group exists
     if ret == ESRCH || ret == EPERM {
-        pass("kill: pid=-2 returns ESRCH or EPERM");
+        cat.pass("kill: pid=-2 returns ESRCH or EPERM");
     } else if ret == 0 {
-        pass("kill: pid=-2 succeeded (group exists)");
+        cat.pass("kill: pid=-2 succeeded (group exists)");
     } else {
-        fail_errno("kill: pid=-2 returns expected error", ESRCH, ret);
+        cat.fail_errno("kill: pid=-2 returns expected error", ESRCH, ret);
     }
 
     // 5. Signal 0 to non-existent process
     let ret = unsafe { syscall2(nr::KILL, 99999, 0) };
     if ret == ESRCH {
-        pass("kill(99999, 0): returns ESRCH");
+        cat.pass("kill(99999, 0): returns ESRCH");
     } else {
-        fail_errno("kill(99999, 0): returns ESRCH", ESRCH, ret);
+        cat.fail_errno("kill(99999, 0): returns ESRCH", ESRCH, ret);
     }
 }
 
 /// Boundary tests for signals
-pub fn test_signal_boundary() {
+pub fn test_signal_boundary(cat: &mut crate::TestCategory) {
     write_str("\n=== Signals: boundary cases ===\n");
 
     let pid = unsafe { syscall0(nr::GETPID) };
@@ -316,9 +317,9 @@ pub fn test_signal_boundary() {
     // 1. Signal 0 (existence check, doesn't send actual signal)
     let ret = unsafe { syscall2(nr::KILL, pid as u64, 0) };
     if ret == 0 {
-        pass("kill: signal 0 doesn't kill process");
+        cat.pass("kill: signal 0 doesn't kill process");
     } else {
-        fail_errno("kill: signal 0 doesn't kill process", 0, ret);
+        cat.fail_errno("kill: signal 0 doesn't kill process", 0, ret);
     }
 
     // 2. Signal 1 (SIGHUP) - minimum valid signal
@@ -329,11 +330,11 @@ pub fn test_signal_boundary() {
         syscall4(nr::SIGPROCMASK, SIG_BLOCK, &mask as *const _ as u64, 0, 8)
     };
     if ret == 0 {
-        pass("sigprocmask: signal 1 (SIGHUP) is valid");
+        cat.pass("sigprocmask: signal 1 (SIGHUP) is valid");
         // Unblock
         unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &mask as *const _ as u64, 0, 8) };
     } else {
-        fail_errno("sigprocmask: signal 1 (SIGHUP) is valid", 0, ret);
+        cat.fail_errno("sigprocmask: signal 1 (SIGHUP) is valid", 0, ret);
     }
 
     // 3. Signal 31 (SIGSYS) - maximum standard signal
@@ -342,10 +343,10 @@ pub fn test_signal_boundary() {
         syscall4(nr::SIGPROCMASK, SIG_BLOCK, &mask as *const _ as u64, 0, 8)
     };
     if ret == 0 {
-        pass("sigprocmask: signal 31 (SIGSYS) is valid");
+        cat.pass("sigprocmask: signal 31 (SIGSYS) is valid");
         unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &mask as *const _ as u64, 0, 8) };
     } else {
-        fail_errno("sigprocmask: signal 31 (SIGSYS) is valid", 0, ret);
+        cat.fail_errno("sigprocmask: signal 31 (SIGSYS) is valid", 0, ret);
     }
 
     // 4. Signal 64 (SIGRTMAX in extended signal range)
@@ -356,13 +357,13 @@ pub fn test_signal_boundary() {
         syscall4(nr::SIGPROCMASK, SIG_BLOCK, &rt_mask as *const _ as u64, 0, 8)
     };
     if ret == 0 || ret == EINVAL {
-        pass("sigprocmask: signal 64 (SIGRTMAX) handled");
+        cat.pass("sigprocmask: signal 64 (SIGRTMAX) handled");
         // Unblock if we succeeded
         if ret == 0 {
             unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &rt_mask as *const _ as u64, 0, 8) };
         }
     } else {
-        fail_errno("sigprocmask: signal 64 (SIGRTMAX) handled", 0, ret);
+        cat.fail_errno("sigprocmask: signal 64 (SIGRTMAX) handled", 0, ret);
     }
 
     // 5. Empty signal mask operations
@@ -371,9 +372,9 @@ pub fn test_signal_boundary() {
         syscall4(nr::SIGPROCMASK, SIG_BLOCK, &empty as *const _ as u64, 0, 8)
     };
     if ret == 0 {
-        pass("sigprocmask: block empty mask succeeds");
+        cat.pass("sigprocmask: block empty mask succeeds");
     } else {
-        fail_errno("sigprocmask: block empty mask succeeds", 0, ret);
+        cat.fail_errno("sigprocmask: block empty mask succeeds", 0, ret);
     }
 
     // 6. Full mask (test that blocking all signals is accepted)
@@ -385,16 +386,16 @@ pub fn test_signal_boundary() {
                  saved.as_mut_ptr() as u64, 8)
     };
     if ret == 0 {
-        pass("sigprocmask: set full mask accepted");
+        cat.pass("sigprocmask: set full mask accepted");
         // Restore original mask
         unsafe { syscall4(nr::SIGPROCMASK, SIG_SETMASK, saved.as_ptr() as u64, 0, 8) };
     } else {
-        fail_errno("sigprocmask: set full mask accepted", 0, ret);
+        cat.fail_errno("sigprocmask: set full mask accepted", 0, ret);
     }
 }
 
 /// Test sigaction basics
-pub fn test_sigaction_positive() {
+pub fn test_sigaction_positive(cat: &mut crate::TestCategory) {
     write_str("\n=== Signals: sigaction positive ===\n");
 
     // Note: sigaction requires rt_sigaction (nr 13) with specific structure layout
@@ -425,9 +426,9 @@ pub fn test_sigaction_positive() {
         )
     };
     if ret == 0 {
-        pass("sigaction: install SIGUSR1 handler");
+        cat.pass("sigaction: install SIGUSR1 handler");
     } else {
-        fail_errno("sigaction: install SIGUSR1 handler", 0, ret);
+        cat.fail_errno("sigaction: install SIGUSR1 handler", 0, ret);
         return; // Can't proceed without handler
     }
 
@@ -442,9 +443,9 @@ pub fn test_sigaction_positive() {
         syscall4(nr::SIGACTION, SIGUSR1, 0, &mut query as *mut _ as u64, 8)
     };
     if ret == 0 && query.sa_handler == test_sig_handler as *const () as u64 {
-        pass("sigaction: query returns installed handler");
+        cat.pass("sigaction: query returns installed handler");
     } else {
-        fail("sigaction: query returns installed handler");
+        cat.fail("sigaction: query returns installed handler");
     }
 
     // 3. Restore default handler (SIG_DFL = 0)
@@ -455,9 +456,9 @@ pub fn test_sigaction_positive() {
         syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8)
     };
     if ret == 0 {
-        pass("sigaction: restore SIG_DFL");
+        cat.pass("sigaction: restore SIG_DFL");
     } else {
-        fail_errno("sigaction: restore SIG_DFL", 0, ret);
+        cat.fail_errno("sigaction: restore SIG_DFL", 0, ret);
     }
 
     // 4. Install handler for SIGUSR2
@@ -468,9 +469,9 @@ pub fn test_sigaction_positive() {
         syscall4(nr::SIGACTION, SIGUSR2, &sa as *const _ as u64, 0, 8)
     };
     if ret == 0 {
-        pass("sigaction: install SIGUSR2 handler");
+        cat.pass("sigaction: install SIGUSR2 handler");
     } else {
-        fail_errno("sigaction: install SIGUSR2 handler", 0, ret);
+        cat.fail_errno("sigaction: install SIGUSR2 handler", 0, ret);
     }
 
     // Restore SIGUSR2 to default
@@ -481,7 +482,7 @@ pub fn test_sigaction_positive() {
 }
 
 /// Negative tests for sigaction
-pub fn test_sigaction_negative() {
+pub fn test_sigaction_negative(cat: &mut crate::TestCategory) {
     write_str("\n=== Signals: sigaction negative ===\n");
 
     let sa = Sigaction {
@@ -496,9 +497,9 @@ pub fn test_sigaction_negative() {
         syscall4(nr::SIGACTION, 0, &sa as *const _ as u64, 0, 8)
     };
     if ret == EINVAL {
-        pass("sigaction: signal 0 returns EINVAL");
+        cat.pass("sigaction: signal 0 returns EINVAL");
     } else {
-        fail_errno("sigaction: signal 0 returns EINVAL", EINVAL, ret);
+        cat.fail_errno("sigaction: signal 0 returns EINVAL", EINVAL, ret);
     }
 
     // 2. Invalid signal number (> 64)
@@ -506,9 +507,9 @@ pub fn test_sigaction_negative() {
         syscall4(nr::SIGACTION, 999, &sa as *const _ as u64, 0, 8)
     };
     if ret == EINVAL {
-        pass("sigaction: signal 999 returns EINVAL");
+        cat.pass("sigaction: signal 999 returns EINVAL");
     } else {
-        fail_errno("sigaction: signal 999 returns EINVAL", EINVAL, ret);
+        cat.fail_errno("sigaction: signal 999 returns EINVAL", EINVAL, ret);
     }
 
     // 3. Try to install handler for SIGKILL
@@ -516,9 +517,9 @@ pub fn test_sigaction_negative() {
         syscall4(nr::SIGACTION, SIGKILL, &sa as *const _ as u64, 0, 8)
     };
     if ret == EINVAL {
-        pass("sigaction: SIGKILL returns EINVAL");
+        cat.pass("sigaction: SIGKILL returns EINVAL");
     } else {
-        fail_errno("sigaction: SIGKILL returns EINVAL", EINVAL, ret);
+        cat.fail_errno("sigaction: SIGKILL returns EINVAL", EINVAL, ret);
     }
 
     // 4. Try to install handler for SIGSTOP
@@ -526,9 +527,9 @@ pub fn test_sigaction_negative() {
         syscall4(nr::SIGACTION, SIGSTOP, &sa as *const _ as u64, 0, 8)
     };
     if ret == EINVAL {
-        pass("sigaction: SIGSTOP returns EINVAL");
+        cat.pass("sigaction: SIGSTOP returns EINVAL");
     } else {
-        fail_errno("sigaction: SIGSTOP returns EINVAL", EINVAL, ret);
+        cat.fail_errno("sigaction: SIGSTOP returns EINVAL", EINVAL, ret);
     }
 
     // 5. Invalid sigsetsize
@@ -536,9 +537,9 @@ pub fn test_sigaction_negative() {
         syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 4)
     };
     if ret == EINVAL {
-        pass("sigaction: invalid sigsetsize returns EINVAL");
+        cat.pass("sigaction: invalid sigsetsize returns EINVAL");
     } else {
-        fail_errno("sigaction: invalid sigsetsize returns EINVAL", EINVAL, ret);
+        cat.fail_errno("sigaction: invalid sigsetsize returns EINVAL", EINVAL, ret);
     }
 }
 
@@ -554,7 +555,7 @@ extern "C" fn test_sig_handler_usr2(sig: i32) {
 }
 
 /// Test: install SIGUSR1 handler → kill(self, SIGUSR1) → verify handler ran
-pub fn test_signal_delivery_sigusr1() {
+pub fn test_signal_delivery_sigusr1(cat: &mut crate::TestCategory) {
     write_str("\n=== Signal delivery: SIGUSR1 handler invoked ===\n");
 
     // Install handler BEFORE unblocking (if SIGUSR1 is pending with SIG_DFL,
@@ -570,7 +571,7 @@ pub fn test_signal_delivery_sigusr1() {
         syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8)
     };
     if ret != 0 {
-        fail_errno("install SIGUSR1 handler", 0, ret);
+        cat.fail_errno("install SIGUSR1 handler", 0, ret);
         return;
     }
 
@@ -586,16 +587,16 @@ pub fn test_signal_delivery_sigusr1() {
     let pid = unsafe { syscall0(nr::GETPID) };
     let ret = unsafe { syscall2(nr::KILL, pid as u64, SIGUSR1) };
     if ret != 0 {
-        fail_errno("kill(self, SIGUSR1)", 0, ret);
+        cat.fail_errno("kill(self, SIGUSR1)", 0, ret);
         return;
     }
 
     // Verify handler ran
     let received = SIGNAL_RECEIVED.load(Ordering::SeqCst);
     if received == 1 {
-        pass("SIGUSR1 handler was invoked");
+        cat.pass("SIGUSR1 handler was invoked");
     } else {
-        fail("SIGUSR1 handler was invoked");
+        cat.fail("SIGUSR1 handler was invoked");
         write_str("    SIGNAL_RECEIVED=");
         write_num(received as i64);
         write_str("\n");
@@ -604,9 +605,9 @@ pub fn test_signal_delivery_sigusr1() {
     // Verify correct signal number was passed
     let signo = SIGNAL_NUMBER.load(Ordering::SeqCst);
     if signo == SIGUSR1 as u32 {
-        pass("handler received correct signal number (10)");
+        cat.pass("handler received correct signal number (10)");
     } else {
-        fail("handler received correct signal number (10)");
+        cat.fail("handler received correct signal number (10)");
         write_str("    got signo=");
         write_num(signo as i64);
         write_str("\n");
@@ -620,7 +621,7 @@ pub fn test_signal_delivery_sigusr1() {
 }
 
 /// Test: install SIGUSR2 handler → tgkill(self, SIGUSR2) → verify
-pub fn test_signal_delivery_sigusr2() {
+pub fn test_signal_delivery_sigusr2(cat: &mut crate::TestCategory) {
     write_str("\n=== Signal delivery: SIGUSR2 via tgkill ===\n");
 
     SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
@@ -637,7 +638,7 @@ pub fn test_signal_delivery_sigusr2() {
         syscall4(nr::SIGACTION, SIGUSR2, &sa as *const _ as u64, 0, 8)
     };
     if ret != 0 {
-        fail_errno("install SIGUSR2 handler", 0, ret);
+        cat.fail_errno("install SIGUSR2 handler", 0, ret);
         return;
     }
 
@@ -646,22 +647,22 @@ pub fn test_signal_delivery_sigusr2() {
     let tid = unsafe { syscall0(nr::GETTID) };
     let ret = unsafe { syscall3(nr::TGKILL, pid as u64, tid as u64, SIGUSR2) };
     if ret != 0 {
-        fail_errno("tgkill(self, SIGUSR2)", 0, ret);
+        cat.fail_errno("tgkill(self, SIGUSR2)", 0, ret);
         return;
     }
 
     let received = SIGNAL_RECEIVED.load(Ordering::SeqCst);
     if received == 2 {
-        pass("SIGUSR2 handler was invoked (distinct from SIGUSR1)");
+        cat.pass("SIGUSR2 handler was invoked (distinct from SIGUSR1)");
     } else {
-        fail("SIGUSR2 handler was invoked");
+        cat.fail("SIGUSR2 handler was invoked");
     }
 
     let signo = SIGNAL_NUMBER.load(Ordering::SeqCst);
     if signo == SIGUSR2 as u32 {
-        pass("handler received SIGUSR2 (12)");
+        cat.pass("handler received SIGUSR2 (12)");
     } else {
-        fail("handler received SIGUSR2 (12)");
+        cat.fail("handler received SIGUSR2 (12)");
         write_str("    got signo=");
         write_num(signo as i64);
         write_str("\n");
@@ -675,7 +676,7 @@ pub fn test_signal_delivery_sigusr2() {
 }
 
 /// Test: blocked signal is held pending, delivered on unblock
-pub fn test_signal_blocked_pending() {
+pub fn test_signal_blocked_pending(cat: &mut crate::TestCategory) {
     write_str("\n=== Signal delivery: blocked → pending → delivered on unblock ===\n");
 
     // Install handler FIRST (safe to unblock after)
@@ -689,7 +690,7 @@ pub fn test_signal_blocked_pending() {
         syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8)
     };
     if ret != 0 {
-        fail_errno("install handler for pending test", 0, ret);
+        cat.fail_errno("install handler for pending test", 0, ret);
         return;
     }
 
@@ -714,9 +715,9 @@ pub fn test_signal_blocked_pending() {
     // Verify handler has NOT run yet (signal is pending)
     let received = SIGNAL_RECEIVED.load(Ordering::SeqCst);
     if received == 0 {
-        pass("blocked signal not delivered yet");
+        cat.pass("blocked signal not delivered yet");
     } else {
-        fail("blocked signal not delivered yet (handler ran prematurely)");
+        cat.fail("blocked signal not delivered yet (handler ran prematurely)");
     }
 
     // Unblock SIGUSR1 — pending signal should be delivered immediately
@@ -726,9 +727,9 @@ pub fn test_signal_blocked_pending() {
 
     let received = SIGNAL_RECEIVED.load(Ordering::SeqCst);
     if received == 1 {
-        pass("pending signal delivered on unblock");
+        cat.pass("pending signal delivered on unblock");
     } else {
-        fail("pending signal delivered on unblock");
+        cat.fail("pending signal delivered on unblock");
         write_str("    SIGNAL_RECEIVED=");
         write_num(received as i64);
         write_str("\n");
@@ -742,7 +743,7 @@ pub fn test_signal_blocked_pending() {
 }
 
 /// Test: SIGALRM delivery (timer signal)
-pub fn test_signal_delivery_sigalrm() {
+pub fn test_signal_delivery_sigalrm(cat: &mut crate::TestCategory) {
     write_str("\n=== Signal delivery: SIGALRM ===\n");
 
     SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
@@ -759,7 +760,7 @@ pub fn test_signal_delivery_sigalrm() {
         syscall4(nr::SIGACTION, SIGALRM, &sa as *const _ as u64, 0, 8)
     };
     if ret != 0 {
-        fail_errno("install SIGALRM handler", 0, ret);
+        cat.fail_errno("install SIGALRM handler", 0, ret);
         return;
     }
 
@@ -770,9 +771,9 @@ pub fn test_signal_delivery_sigalrm() {
     let signo = SIGNAL_NUMBER.load(Ordering::SeqCst);
 
     if received == 1 && signo == SIGALRM as u32 {
-        pass("SIGALRM delivered and handler invoked");
+        cat.pass("SIGALRM delivered and handler invoked");
     } else {
-        fail("SIGALRM delivered and handler invoked");
+        cat.fail("SIGALRM delivered and handler invoked");
     }
 
     sa.sa_handler = 0;
@@ -782,7 +783,7 @@ pub fn test_signal_delivery_sigalrm() {
 }
 
 /// Test: multiple signals delivered in sequence
-pub fn test_signal_multiple_delivery() {
+pub fn test_signal_multiple_delivery(cat: &mut crate::TestCategory) {
     write_str("\n=== Signal delivery: multiple signals in sequence ===\n");
 
     static DELIVERY_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -817,16 +818,16 @@ pub fn test_signal_multiple_delivery() {
 
     let count = DELIVERY_COUNT.load(Ordering::SeqCst);
     if count == 5 {
-        pass("5 signals → 5 handler invocations");
+        cat.pass("5 signals → 5 handler invocations");
     } else {
         // Signals may coalesce if pending — count >= 1 is valid
         if count >= 1 {
-            pass("signals delivered (some may coalesce)");
+            cat.pass("signals delivered (some may coalesce)");
             write_str("    delivered ");
             write_num(count as i64);
             write_str(" of 5\n");
         } else {
-            fail("no signals delivered");
+            cat.fail("no signals delivered");
         }
     }
 
@@ -841,7 +842,7 @@ pub fn test_signal_multiple_delivery() {
 // sigpending — query pending signal set
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_sigpending() {
+pub fn test_sigpending(cat: &mut crate::TestCategory) {
     write_str("\n=== Signal: sigpending ===\n");
 
     // Install handler FIRST so delivery on unblock doesn't kill us
@@ -870,15 +871,15 @@ pub fn test_sigpending() {
         syscall2(nr::SIGPENDING, pending.as_mut_ptr() as u64, 8)
     };
     if ret == 0 {
-        pass("sigpending returns 0");
+        cat.pass("sigpending returns 0");
     } else {
-        fail_errno("sigpending returns 0", 0, ret);
+        cat.fail_errno("sigpending returns 0", 0, ret);
     }
 
     if (pending[0] & (1 << (SIGUSR1 - 1))) != 0 {
-        pass("SIGUSR1 appears in pending set");
+        cat.pass("SIGUSR1 appears in pending set");
     } else {
-        fail("SIGUSR1 appears in pending set");
+        cat.fail("SIGUSR1 appears in pending set");
     }
 
     // Unblock to clear the pending signal
@@ -893,7 +894,7 @@ pub fn test_sigpending() {
 // rt_sigtimedwait — synchronous signal wait
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_sigtimedwait() {
+pub fn test_sigtimedwait(cat: &mut crate::TestCategory) {
     write_str("\n=== Signal: rt_sigtimedwait ===\n");
 
     // Explicitly set mask with SIGUSR1 blocked (deterministic state)
@@ -914,11 +915,11 @@ pub fn test_sigtimedwait() {
                  &ts as *const _ as u64, 8)
     };
     if ret == SIGUSR1 as i64 {
-        pass("rt_sigtimedwait returns SIGUSR1");
+        cat.pass("rt_sigtimedwait returns SIGUSR1");
     } else if ret > 0 {
-        pass("rt_sigtimedwait returned a signal");
+        cat.pass("rt_sigtimedwait returned a signal");
     } else {
-        fail_errno("rt_sigtimedwait returns signal", SIGUSR1 as i64, ret);
+        cat.fail_errno("rt_sigtimedwait returns signal", SIGUSR1 as i64, ret);
     }
 
     // Timeout with no pending signal → EAGAIN
@@ -928,9 +929,9 @@ pub fn test_sigtimedwait() {
                  &ts2 as *const _ as u64, 8)
     };
     if ret == -11 { // EAGAIN
-        pass("rt_sigtimedwait with no pending signal returns EAGAIN");
+        cat.pass("rt_sigtimedwait with no pending signal returns EAGAIN");
     } else {
-        fail_errno("rt_sigtimedwait timeout returns EAGAIN", -11, ret);
+        cat.fail_errno("rt_sigtimedwait timeout returns EAGAIN", -11, ret);
     }
 
     // Restore mask
@@ -941,30 +942,49 @@ pub fn test_sigtimedwait() {
 // Module entry point
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn run_all() {
+pub fn run_all(results: &mut crate::Results) {
+    use crate::{PseLevel, TestCategory};
     crate::write_banner("SIGNAL TESTS");
 
-    // Positive tests
-    test_sigprocmask_positive();
-    test_kill_positive();
-    test_sigaction_positive();
+    let mut cat = TestCategory::new(PseLevel::PSE51, "sigprocmask: positive");
+    test_sigprocmask_positive(&mut cat); results.add(cat);
 
-    // Negative tests
-    test_sigprocmask_negative();
-    test_kill_negative();
-    test_sigaction_negative();
+    let mut cat = TestCategory::new(PseLevel::PSE51, "kill: positive");
+    test_kill_positive(&mut cat); results.add(cat);
 
-    // Boundary tests
-    test_signal_boundary();
+    let mut cat = TestCategory::new(PseLevel::PSE51, "sigaction: positive");
+    test_sigaction_positive(&mut cat); results.add(cat);
 
-    // Signal delivery verification
-    test_signal_delivery_sigusr1();
-    test_signal_delivery_sigusr2();
-    test_signal_blocked_pending();
-    test_signal_delivery_sigalrm();
-    test_signal_multiple_delivery();
+    let mut cat = TestCategory::new(PseLevel::PSE51, "sigprocmask: negative");
+    test_sigprocmask_negative(&mut cat); results.add(cat);
 
-    // Realtime signal extensions
-    test_sigpending();
-    test_sigtimedwait();
+    let mut cat = TestCategory::new(PseLevel::PSE51, "kill: negative");
+    test_kill_negative(&mut cat); results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "sigaction: negative");
+    test_sigaction_negative(&mut cat); results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "signal: boundary cases");
+    test_signal_boundary(&mut cat); results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "signal delivery: SIGUSR1");
+    test_signal_delivery_sigusr1(&mut cat); results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "signal delivery: SIGUSR2 via tgkill");
+    test_signal_delivery_sigusr2(&mut cat); results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "signal delivery: blocked → pending → unblock");
+    test_signal_blocked_pending(&mut cat); results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "signal delivery: SIGALRM");
+    test_signal_delivery_sigalrm(&mut cat); results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "signal delivery: multiple in sequence");
+    test_signal_multiple_delivery(&mut cat); results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "sigpending");
+    test_sigpending(&mut cat); results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "rt_sigtimedwait");
+    test_sigtimedwait(&mut cat); results.add(cat);
 }

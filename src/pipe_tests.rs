@@ -5,7 +5,7 @@
 //! - Negative: invalid fds, closed pipes, bad buffers
 //! - Boundary: zero-length, large transfers, pipe capacity
 
-use crate::{fail, fail_errno, nr, pass, syscall1, syscall2, syscall3, write_str, Iovec};
+use crate::{nr, syscall1, syscall2, syscall3, Iovec, PseLevel, TestCategory};
 
 // Error codes
 const EBADF: i64 = -9;
@@ -14,25 +14,26 @@ const EBADF: i64 = -9;
 // PIPE2: Positive Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_pipe_positive() {
-    write_str("\n=== pipe2: positive tests ===\n");
+fn test_pipe_positive(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "pipe2: positive tests");
+    cat.header();
 
     // 1. Basic pipe creation
     let mut fds = [0i32; 2];
     let ret = unsafe { syscall2(nr::PIPE2, fds.as_mut_ptr() as u64, 0) };
     if ret == 0 {
-        pass("pipe2() returns 0");
+        cat.pass("pipe2() returns 0");
         if fds[0] >= 3 && fds[1] >= 3 && fds[0] != fds[1] {
-            pass("pipe2 fds are valid and distinct");
+            cat.pass("pipe2 fds are valid and distinct");
         } else {
-            fail("pipe2 fds are valid and distinct");
+            cat.fail("pipe2 fds are valid and distinct");
         }
         unsafe {
             syscall1(nr::CLOSE, fds[0] as u64);
             syscall1(nr::CLOSE, fds[1] as u64);
         }
     } else {
-        fail_errno("pipe2() returns 0", 0, ret);
+        cat.fail_errno("pipe2() returns 0", 0, ret);
     }
 
     // 2. O_CLOEXEC flag
@@ -40,13 +41,13 @@ fn test_pipe_positive() {
     const O_CLOEXEC: u64 = 0x80000;
     let ret = unsafe { syscall2(nr::PIPE2, fds.as_mut_ptr() as u64, O_CLOEXEC) };
     if ret == 0 {
-        pass("pipe2(O_CLOEXEC) returns 0");
+        cat.pass("pipe2(O_CLOEXEC) returns 0");
         unsafe {
             syscall1(nr::CLOSE, fds[0] as u64);
             syscall1(nr::CLOSE, fds[1] as u64);
         }
     } else {
-        fail("pipe2(O_CLOEXEC) returns 0");
+        cat.fail("pipe2(O_CLOEXEC) returns 0");
     }
 
     // 3. O_NONBLOCK flag
@@ -54,35 +55,39 @@ fn test_pipe_positive() {
     const O_NONBLOCK: u64 = 0x800;
     let ret = unsafe { syscall2(nr::PIPE2, fds.as_mut_ptr() as u64, O_NONBLOCK) };
     if ret == 0 {
-        pass("pipe2(O_NONBLOCK) returns 0");
+        cat.pass("pipe2(O_NONBLOCK) returns 0");
         // Read from empty non-blocking pipe should return -EAGAIN
         let mut buf = [0u8; 1];
         let ret = unsafe { syscall3(nr::READ, fds[0] as u64, buf.as_mut_ptr() as u64, 1) };
         if ret == -11 {
             // -EAGAIN
-            pass("read(nonblock empty) -EAGAIN");
+            cat.pass("read(nonblock empty) -EAGAIN");
         } else {
-            fail_errno("read(nonblock empty) -EAGAIN", -11, ret);
+            cat.fail_errno("read(nonblock empty) -EAGAIN", -11, ret);
         }
         unsafe {
             syscall1(nr::CLOSE, fds[0] as u64);
             syscall1(nr::CLOSE, fds[1] as u64);
         }
     } else {
-        fail("pipe2(O_NONBLOCK) returns 0");
+        cat.fail("pipe2(O_NONBLOCK) returns 0");
     }
+
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // READ/WRITE: Positive Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_rw_positive() {
-    write_str("\n=== read/write: positive tests ===\n");
+fn test_rw_positive(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "read/write: positive tests");
+    cat.header();
 
     let mut fds = [0i32; 2];
     if unsafe { syscall2(nr::PIPE2, fds.as_mut_ptr() as u64, 0) } != 0 {
-        fail("rw positive: pipe setup");
+        cat.fail("rw positive: pipe setup");
+        results.add(cat);
         return;
     }
     let rd = fds[0];
@@ -92,40 +97,40 @@ fn test_rw_positive() {
     let data = [0x42u8];
     let ret = unsafe { syscall3(nr::WRITE, wr as u64, data.as_ptr() as u64, 1) };
     if ret == 1 {
-        pass("write(1 byte) returns 1");
+        cat.pass("write(1 byte) returns 1");
     } else {
-        fail_errno("write(1 byte) returns 1", 1, ret);
+        cat.fail_errno("write(1 byte) returns 1", 1, ret);
     }
 
     let mut buf = [0u8; 1];
     let ret = unsafe { syscall3(nr::READ, rd as u64, buf.as_mut_ptr() as u64, 1) };
     if ret == 1 && buf[0] == 0x42 {
-        pass("read(1 byte) returns 1, correct data");
+        cat.pass("read(1 byte) returns 1, correct data");
     } else {
-        fail("read(1 byte) returns 1, correct data");
+        cat.fail("read(1 byte) returns 1, correct data");
     }
 
     // 2. Multi-byte write/read
     let data: [u8; 64] = core::array::from_fn(|i| i as u8);
     let ret = unsafe { syscall3(nr::WRITE, wr as u64, data.as_ptr() as u64, 64) };
     if ret == 64 {
-        pass("write(64 bytes) returns 64");
+        cat.pass("write(64 bytes) returns 64");
     } else {
-        fail_errno("write(64 bytes) returns 64", 64, ret);
+        cat.fail_errno("write(64 bytes) returns 64", 64, ret);
     }
 
     let mut buf = [0u8; 64];
     let ret = unsafe { syscall3(nr::READ, rd as u64, buf.as_mut_ptr() as u64, 64) };
     if ret == 64 {
-        pass("read(64 bytes) returns 64");
+        cat.pass("read(64 bytes) returns 64");
         let ok = buf.iter().enumerate().all(|(i, &b)| b == i as u8);
         if ok {
-            pass("read data matches write");
+            cat.pass("read data matches write");
         } else {
-            fail("read data matches write");
+            cat.fail("read data matches write");
         }
     } else {
-        fail_errno("read(64 bytes) returns 64", 64, ret);
+        cat.fail_errno("read(64 bytes) returns 64", 64, ret);
     }
 
     // 3. Partial read (request more than available)
@@ -134,9 +139,9 @@ fn test_rw_positive() {
     let mut buf = [0u8; 100];
     let ret = unsafe { syscall3(nr::READ, rd as u64, buf.as_mut_ptr() as u64, 100) };
     if ret == 4 {
-        pass("read(partial) returns available");
+        cat.pass("read(partial) returns available");
     } else {
-        fail_errno("read(partial) returns available", 4, ret);
+        cat.fail_errno("read(partial) returns available", 4, ret);
     }
 
     // 4. Multiple writes, single read
@@ -147,40 +152,43 @@ fn test_rw_positive() {
     let mut buf = [0u8; 4];
     let ret = unsafe { syscall3(nr::READ, rd as u64, buf.as_mut_ptr() as u64, 4) };
     if ret == 4 && buf == [0, 1, 2, 3] {
-        pass("multiple writes, single read");
+        cat.pass("multiple writes, single read");
     } else {
-        fail("multiple writes, single read");
+        cat.fail("multiple writes, single read");
     }
 
     unsafe {
         syscall1(nr::CLOSE, rd as u64);
         syscall1(nr::CLOSE, wr as u64);
     }
+
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // READ/WRITE: Negative Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_rw_negative() {
-    write_str("\n=== read/write: negative tests ===\n");
+fn test_rw_negative(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "read/write: negative tests");
+    cat.header();
 
     // 1. Read from invalid fd
     let mut buf = [0u8; 1];
     let ret = unsafe { syscall3(nr::READ, 999, buf.as_mut_ptr() as u64, 1) };
     if ret == EBADF {
-        pass("read(bad fd) -EBADF");
+        cat.pass("read(bad fd) -EBADF");
     } else {
-        fail_errno("read(bad fd) -EBADF", EBADF, ret);
+        cat.fail_errno("read(bad fd) -EBADF", EBADF, ret);
     }
 
     // 2. Write to invalid fd
     let data = [0u8];
     let ret = unsafe { syscall3(nr::WRITE, 999, data.as_ptr() as u64, 1) };
     if ret == EBADF {
-        pass("write(bad fd) -EBADF");
+        cat.pass("write(bad fd) -EBADF");
     } else {
-        fail_errno("write(bad fd) -EBADF", EBADF, ret);
+        cat.fail_errno("write(bad fd) -EBADF", EBADF, ret);
     }
 
     // 3. Read from write-only fd (pipe write end)
@@ -188,17 +196,17 @@ fn test_rw_negative() {
     if unsafe { syscall2(nr::PIPE2, fds.as_mut_ptr() as u64, 0) } == 0 {
         let ret = unsafe { syscall3(nr::READ, fds[1] as u64, buf.as_mut_ptr() as u64, 1) };
         if ret == EBADF {
-            pass("read(write-end) -EBADF");
+            cat.pass("read(write-end) -EBADF");
         } else {
-            fail_errno("read(write-end) -EBADF", EBADF, ret);
+            cat.fail_errno("read(write-end) -EBADF", EBADF, ret);
         }
 
         // 4. Write to read-only fd (pipe read end)
         let ret = unsafe { syscall3(nr::WRITE, fds[0] as u64, data.as_ptr() as u64, 1) };
         if ret == EBADF {
-            pass("write(read-end) -EBADF");
+            cat.pass("write(read-end) -EBADF");
         } else {
-            fail_errno("write(read-end) -EBADF", EBADF, ret);
+            cat.fail_errno("write(read-end) -EBADF", EBADF, ret);
         }
 
         unsafe {
@@ -214,24 +222,28 @@ fn test_rw_negative() {
         let ret = unsafe { syscall3(nr::READ, fds[0] as u64, buf.as_mut_ptr() as u64, 1) };
         // Should return 0 (EOF) since write end closed
         if ret == 0 {
-            pass("read(closed write end) EOF");
+            cat.pass("read(closed write end) EOF");
         } else {
-            fail_errno("read(closed write end) EOF", 0, ret);
+            cat.fail_errno("read(closed write end) EOF", 0, ret);
         }
         unsafe { syscall1(nr::CLOSE, fds[0] as u64) };
     }
+
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // READ/WRITE: Boundary Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_rw_boundary() {
-    write_str("\n=== read/write: boundary tests ===\n");
+fn test_rw_boundary(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "read/write: boundary tests");
+    cat.header();
 
     let mut fds = [0i32; 2];
     if unsafe { syscall2(nr::PIPE2, fds.as_mut_ptr() as u64, 0) } != 0 {
-        fail("boundary: pipe setup");
+        cat.fail("boundary: pipe setup");
+        results.add(cat);
         return;
     }
     let rd = fds[0];
@@ -241,29 +253,29 @@ fn test_rw_boundary() {
     let data = [0u8];
     let ret = unsafe { syscall3(nr::WRITE, wr as u64, data.as_ptr() as u64, 0) };
     if ret == 0 {
-        pass("write(len=0) returns 0");
+        cat.pass("write(len=0) returns 0");
     } else {
-        fail_errno("write(len=0) returns 0", 0, ret);
+        cat.fail_errno("write(len=0) returns 0", 0, ret);
     }
 
     // 2. Zero-length read returns 0
     let mut buf = [0u8];
     let ret = unsafe { syscall3(nr::READ, rd as u64, buf.as_mut_ptr() as u64, 0) };
     if ret == 0 {
-        pass("read(len=0) returns 0");
+        cat.pass("read(len=0) returns 0");
     } else {
-        fail_errno("read(len=0) returns 0", 0, ret);
+        cat.fail_errno("read(len=0) returns 0", 0, ret);
     }
 
     // 3. Large write (4KB)
     let data = [0xABu8; 4096];
     let ret = unsafe { syscall3(nr::WRITE, wr as u64, data.as_ptr() as u64, 4096) };
     if ret == 4096 {
-        pass("write(4KB) returns 4096");
+        cat.pass("write(4KB) returns 4096");
     } else if ret > 0 {
-        pass("write(4KB) partial");
+        cat.pass("write(4KB) partial");
     } else {
-        fail_errno("write(4KB) returns 4096", 4096, ret);
+        cat.fail_errno("write(4KB) returns 4096", 4096, ret);
     }
 
     // 4. Read all written data
@@ -284,27 +296,31 @@ fn test_rw_boundary() {
         total += n;
     }
     if total == ret {
-        pass("read all written data");
+        cat.pass("read all written data");
     } else {
-        fail("read all written data");
+        cat.fail("read all written data");
     }
 
     unsafe {
         syscall1(nr::CLOSE, rd as u64);
         syscall1(nr::CLOSE, wr as u64);
     }
+
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // VECTORED I/O: writev/readv
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_vectored_io() {
-    write_str("\n=== writev/readv: comprehensive ===\n");
+fn test_vectored_io(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "writev/readv: comprehensive");
+    cat.header();
 
     let mut fds = [0i32; 2];
     if unsafe { syscall2(nr::PIPE2, fds.as_mut_ptr() as u64, 0) } != 0 {
-        fail("vectored: pipe setup");
+        cat.fail("vectored: pipe setup");
+        results.add(cat);
         return;
     }
     let rd = fds[0];
@@ -330,9 +346,9 @@ fn test_vectored_io() {
     ];
     let ret = unsafe { syscall3(nr::WRITEV, wr as u64, iov.as_ptr() as u64, 3) };
     if ret == 12 {
-        pass("writev(3 segments) returns 12");
+        cat.pass("writev(3 segments) returns 12");
     } else {
-        fail_errno("writev(3 segments) returns 12", 12, ret);
+        cat.fail_errno("writev(3 segments) returns 12", 12, ret);
     }
 
     // 2. readv with multiple segments
@@ -355,14 +371,14 @@ fn test_vectored_io() {
     ];
     let ret = unsafe { syscall3(nr::READV, rd as u64, iov.as_ptr() as u64, 3) };
     if ret == 12 {
-        pass("readv(3 segments) returns 12");
+        cat.pass("readv(3 segments) returns 12");
         if &rbuf1 == b"AAAA" && &rbuf2 == b"BBBB" && &rbuf3 == b"CCCC" {
-            pass("readv data correct");
+            cat.pass("readv data correct");
         } else {
-            fail("readv data correct");
+            cat.fail("readv data correct");
         }
     } else {
-        fail_errno("readv(3 segments) returns 12", 12, ret);
+        cat.fail_errno("readv(3 segments) returns 12", 12, ret);
     }
 
     // 3. writev with zero-length segment
@@ -385,33 +401,33 @@ fn test_vectored_io() {
     ];
     let ret = unsafe { syscall3(nr::WRITEV, wr as u64, iov.as_ptr() as u64, 3) };
     if ret == 4 {
-        pass("writev with empty segment");
+        cat.pass("writev with empty segment");
     } else {
-        fail_errno("writev with empty segment", 4, ret);
+        cat.fail_errno("writev with empty segment", 4, ret);
     }
 
     // Read the data
     let mut buf = [0u8; 4];
     unsafe { syscall3(nr::READ, rd as u64, buf.as_mut_ptr() as u64, 4) };
     if &buf == b"XXYY" {
-        pass("writev empty segment skipped");
+        cat.pass("writev empty segment skipped");
     } else {
-        fail("writev empty segment skipped");
+        cat.fail("writev empty segment skipped");
     }
 
     // 4. writev/readv with iovcnt=0
     let ret = unsafe { syscall3(nr::WRITEV, wr as u64, 0, 0) };
     if ret == 0 {
-        pass("writev(iovcnt=0) returns 0");
+        cat.pass("writev(iovcnt=0) returns 0");
     } else {
-        fail_errno("writev(iovcnt=0) returns 0", 0, ret);
+        cat.fail_errno("writev(iovcnt=0) returns 0", 0, ret);
     }
 
     let ret = unsafe { syscall3(nr::READV, rd as u64, 0, 0) };
     if ret == 0 {
-        pass("readv(iovcnt=0) returns 0");
+        cat.pass("readv(iovcnt=0) returns 0");
     } else {
-        fail_errno("readv(iovcnt=0) returns 0", 0, ret);
+        cat.fail_errno("readv(iovcnt=0) returns 0", 0, ret);
     }
 
     // 5. writev/readv with bad fd
@@ -421,35 +437,39 @@ fn test_vectored_io() {
     }];
     let ret = unsafe { syscall3(nr::WRITEV, 999, iov.as_ptr() as u64, 1) };
     if ret == EBADF {
-        pass("writev(bad fd) -EBADF");
+        cat.pass("writev(bad fd) -EBADF");
     } else {
-        fail_errno("writev(bad fd) -EBADF", EBADF, ret);
+        cat.fail_errno("writev(bad fd) -EBADF", EBADF, ret);
     }
 
     let ret = unsafe { syscall3(nr::READV, 999, iov.as_ptr() as u64, 1) };
     if ret == EBADF {
-        pass("readv(bad fd) -EBADF");
+        cat.pass("readv(bad fd) -EBADF");
     } else {
-        fail_errno("readv(bad fd) -EBADF", EBADF, ret);
+        cat.fail_errno("readv(bad fd) -EBADF", EBADF, ret);
     }
 
     unsafe {
         syscall1(nr::CLOSE, rd as u64);
         syscall1(nr::CLOSE, wr as u64);
     }
+
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // PIPE: Stress Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_pipe_stress() {
-    write_str("\n=== pipe: stress tests ===\n");
+fn test_pipe_stress(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "pipe: stress tests");
+    cat.header();
 
     // 1. Many small writes and reads
     let mut fds = [0i32; 2];
     if unsafe { syscall2(nr::PIPE2, fds.as_mut_ptr() as u64, 0) } != 0 {
-        fail("stress: pipe setup");
+        cat.fail("stress: pipe setup");
+        results.add(cat);
         return;
     }
     let rd = fds[0];
@@ -465,9 +485,9 @@ fn test_pipe_stress() {
         }
     }
     if ok {
-        pass("100 writes succeed");
+        cat.pass("100 writes succeed");
     } else {
-        fail("100 writes succeed");
+        cat.fail("100 writes succeed");
     }
 
     ok = true;
@@ -480,9 +500,9 @@ fn test_pipe_stress() {
         }
     }
     if ok {
-        pass("100 reads correct");
+        cat.pass("100 reads correct");
     } else {
-        fail("100 reads correct");
+        cat.fail("100 reads correct");
     }
 
     unsafe {
@@ -501,9 +521,9 @@ fn test_pipe_stress() {
         }
     }
     if ok {
-        pass("create 10 pipes");
+        cat.pass("create 10 pipes");
     } else {
-        fail("create 10 pipes");
+        cat.fail("create 10 pipes");
     }
 
     // Close all
@@ -515,14 +535,16 @@ fn test_pipe_stress() {
             }
         }
     }
+
+    results.add(cat);
 }
 
 /// Run all pipe tests
-pub fn run_all() {
-    test_pipe_positive();
-    test_rw_positive();
-    test_rw_negative();
-    test_rw_boundary();
-    test_vectored_io();
-    test_pipe_stress();
+pub fn run_all(results: &mut crate::Results) {
+    test_pipe_positive(results);
+    test_rw_positive(results);
+    test_rw_negative(results);
+    test_rw_boundary(results);
+    test_vectored_io(results);
+    test_pipe_stress(results);
 }

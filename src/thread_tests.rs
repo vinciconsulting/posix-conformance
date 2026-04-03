@@ -16,8 +16,9 @@
 use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
 use crate::nr;
-use crate::{pass, fail, fail_errno, write_str, write_num, write_hex, Timespec};
+use crate::{write_str, write_num, write_hex, Timespec};
 use crate::{syscall0, syscall1, syscall2, syscall6};
+use crate::{TestCategory, PseLevel};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constants
@@ -210,8 +211,9 @@ fn spawn_thread(
 // Tests — all plain Rust
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_basic_thread() {
-    write_str("\n=== Threads: basic CLONE_THREAD ===\n");
+fn test_basic_thread(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Threads: basic CLONE_THREAD");
+    cat.header();
 
     SHARED_COUNTER.store(0, Ordering::SeqCst);
     THREAD_RESULT.store(0, Ordering::SeqCst);
@@ -219,17 +221,17 @@ fn test_basic_thread() {
     let parent_tid = unsafe { syscall0(nr::GETTID) };
 
     let stack_top = match spawn_thread(thread_entry_basic, &THREAD_TID) {
-        Ok(s) => { pass("clone(CLONE_THREAD) returns tid"); s }
-        Err(e) => { fail_errno("clone(CLONE_THREAD)", 0, e); return; }
+        Ok(s) => { cat.pass("clone(CLONE_THREAD) returns tid"); s }
+        Err(e) => { cat.fail_errno("clone(CLONE_THREAD)", 0, e); results.add(cat); return; }
     };
 
     wait_for_thread(&THREAD_TID);
 
     let counter = SHARED_COUNTER.load(Ordering::SeqCst);
     if counter == 1 {
-        pass("CLONE_VM: shared counter incremented by thread");
+        cat.pass("CLONE_VM: shared counter incremented by thread");
     } else {
-        fail("CLONE_VM: shared counter incremented by thread");
+        cat.fail("CLONE_VM: shared counter incremented by thread");
         write_str("    counter=");
         write_num(counter as i64);
         write_str("\n");
@@ -237,9 +239,9 @@ fn test_basic_thread() {
 
     let child_tid = THREAD_RESULT.load(Ordering::SeqCst);
     if child_tid != 0 && child_tid != parent_tid as u32 {
-        pass("thread TID differs from parent TID");
+        cat.pass("thread TID differs from parent TID");
     } else {
-        fail("thread TID differs from parent TID");
+        cat.fail("thread TID differs from parent TID");
         write_str("    parent=");
         write_num(parent_tid);
         write_str(" child=");
@@ -249,19 +251,21 @@ fn test_basic_thread() {
 
     let tid_val = THREAD_TID.load(Ordering::SeqCst);
     if tid_val == 0 {
-        pass("CLONE_CHILD_CLEARTID: tid set to 0 on exit");
+        cat.pass("CLONE_CHILD_CLEARTID: tid set to 0 on exit");
     } else {
-        fail("CLONE_CHILD_CLEARTID: tid set to 0 on exit");
+        cat.fail("CLONE_CHILD_CLEARTID: tid set to 0 on exit");
         write_str("    tid_val=");
         write_num(tid_val as i64);
         write_str("\n");
     }
 
     free_stack(stack_top);
+    results.add(cat);
 }
 
-fn test_thread_tls() {
-    write_str("\n=== Threads: independent TLS ===\n");
+fn test_thread_tls(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Threads: independent TLS");
+    cat.header();
 
     const ARCH_GET_FS: u64 = 0x1003;
     const ARCH_SET_FS: u64 = 0x1002;
@@ -272,31 +276,33 @@ fn test_thread_tls() {
 
     let stack_top = match spawn_thread(thread_entry_tls, &THREAD_TID) {
         Ok(s) => s,
-        Err(e) => { fail_errno("clone for TLS test", 0, e); return; }
+        Err(e) => { cat.fail_errno("clone for TLS test", 0, e); results.add(cat); return; }
     };
 
     wait_for_thread(&THREAD_TID);
 
     if THREAD_RESULT.load(Ordering::SeqCst) == 1 {
-        pass("thread set independent FS base");
+        cat.pass("thread set independent FS base");
     } else {
-        fail("thread set independent FS base");
+        cat.fail("thread set independent FS base");
     }
 
     let mut current_fs: u64 = 0;
     unsafe { syscall2(nr::ARCH_PRCTL, ARCH_GET_FS, &mut current_fs as *mut u64 as u64) };
     if current_fs == parent_fs {
-        pass("parent FS base unchanged after thread exit");
+        cat.pass("parent FS base unchanged after thread exit");
     } else {
-        fail("parent FS base unchanged after thread exit");
+        cat.fail("parent FS base unchanged after thread exit");
     }
 
     unsafe { syscall2(nr::ARCH_PRCTL, ARCH_SET_FS, parent_fs) };
     free_stack(stack_top);
+    results.add(cat);
 }
 
-fn test_two_threads() {
-    write_str("\n=== Threads: two concurrent threads ===\n");
+fn test_two_threads(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Threads: two concurrent threads");
+    cat.header();
 
     SHARED_COUNTER.store(0, Ordering::SeqCst);
     THREAD_RESULT.store(0, Ordering::SeqCst);
@@ -304,27 +310,28 @@ fn test_two_threads() {
 
     let stack1 = match spawn_thread(thread_entry_basic, &THREAD_TID) {
         Ok(s) => s,
-        Err(e) => { fail_errno("clone thread 1", 0, e); return; }
+        Err(e) => { cat.fail_errno("clone thread 1", 0, e); results.add(cat); return; }
     };
     let stack2 = match spawn_thread(thread_entry_second, &THREAD2_TID) {
         Ok(s) => s,
         Err(e) => {
-            fail_errno("clone thread 2", 0, e);
+            cat.fail_errno("clone thread 2", 0, e);
             wait_for_thread(&THREAD_TID);
             free_stack(stack1);
+            results.add(cat);
             return;
         }
     };
-    pass("two threads created");
+    cat.pass("two threads created");
 
     wait_for_thread(&THREAD_TID);
     wait_for_thread(&THREAD2_TID);
 
     let counter = SHARED_COUNTER.load(Ordering::SeqCst);
     if counter == 11 {
-        pass("shared counter = 11 (1 + 10 from two threads)");
+        cat.pass("shared counter = 11 (1 + 10 from two threads)");
     } else {
-        fail("shared counter = 11 (1 + 10 from two threads)");
+        cat.fail("shared counter = 11 (1 + 10 from two threads)");
         write_str("    counter=");
         write_num(counter as i64);
         write_str("\n");
@@ -333,24 +340,26 @@ fn test_two_threads() {
     let tid1 = THREAD_RESULT.load(Ordering::SeqCst);
     let tid2 = THREAD2_RESULT.load(Ordering::SeqCst);
     if tid1 != tid2 && tid1 != 0 && tid2 != 0 {
-        pass("two threads have distinct TIDs");
+        cat.pass("two threads have distinct TIDs");
     } else {
-        fail("two threads have distinct TIDs");
+        cat.fail("two threads have distinct TIDs");
     }
 
     free_stack(stack1);
     free_stack(stack2);
+    results.add(cat);
 }
 
-fn test_futex_sync() {
-    write_str("\n=== Threads: futex wait/wake between threads ===\n");
+fn test_futex_sync(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Threads: futex wait/wake between threads");
+    cat.header();
 
     FUTEX_RENDEZVOUS.store(0, Ordering::SeqCst);
     THREAD_RESULT.store(0, Ordering::SeqCst);
 
     let stack_top = match spawn_thread(thread_entry_futex, &THREAD_TID) {
         Ok(s) => s,
-        Err(e) => { fail_errno("clone for futex sync", 0, e); return; }
+        Err(e) => { cat.fail_errno("clone for futex sync", 0, e); results.add(cat); return; }
     };
 
     // Give thread time to enter FUTEX_WAIT
@@ -365,27 +374,29 @@ fn test_futex_sync() {
         )
     };
     if woken >= 0 {
-        pass("FUTEX_WAKE accepted");
+        cat.pass("FUTEX_WAKE accepted");
     } else {
-        fail_errno("FUTEX_WAKE", 0, woken);
+        cat.fail_errno("FUTEX_WAKE", 0, woken);
     }
 
     wait_for_thread(&THREAD_TID);
 
     if THREAD_RESULT.load(Ordering::SeqCst) == 0xBEEF {
-        pass("thread was woken and ran to completion");
+        cat.pass("thread was woken and ran to completion");
     } else {
-        fail("thread was woken and ran to completion");
+        cat.fail("thread was woken and ran to completion");
         write_str("    result=");
         write_hex(THREAD_RESULT.load(Ordering::SeqCst) as u64);
         write_str("\n");
     }
 
     free_stack(stack_top);
+    results.add(cat);
 }
 
-fn test_thread_pid_tid() {
-    write_str("\n=== Threads: getpid/gettid consistency ===\n");
+fn test_thread_pid_tid(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Threads: getpid/gettid consistency");
+    cat.header();
 
     let parent_pid = unsafe { syscall0(nr::GETPID) };
     let parent_tid = unsafe { syscall0(nr::GETTID) };
@@ -395,37 +406,38 @@ fn test_thread_pid_tid() {
 
     let stack_top = match spawn_thread(thread_entry_basic, &THREAD_TID) {
         Ok(s) => s,
-        Err(e) => { fail_errno("clone for pid/tid test", 0, e); return; }
+        Err(e) => { cat.fail_errno("clone for pid/tid test", 0, e); results.add(cat); return; }
     };
 
     wait_for_thread(&THREAD_TID);
 
     if parent_pid == parent_tid {
-        pass("main thread: getpid() == gettid()");
+        cat.pass("main thread: getpid() == gettid()");
     } else {
-        fail("main thread: getpid() == gettid()");
+        cat.fail("main thread: getpid() == gettid()");
     }
 
     let thread_tid = THREAD_RESULT.load(Ordering::SeqCst);
     if thread_tid != parent_tid as u32 && thread_tid != 0 {
-        pass("child thread: different TID from main");
+        cat.pass("child thread: different TID from main");
     } else {
-        fail("child thread: different TID from main");
+        cat.fail("child thread: different TID from main");
     }
 
     free_stack(stack_top);
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Module entry point
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn run_all() {
+pub fn run_all(results: &mut crate::Results) {
     crate::write_banner("THREAD (PTHREAD) TESTS");
 
-    test_basic_thread();
-    test_thread_tls();
-    test_two_threads();
-    test_futex_sync();
-    test_thread_pid_tid();
+    test_basic_thread(results);
+    test_thread_tls(results);
+    test_two_threads(results);
+    test_futex_sync(results);
+    test_thread_pid_tid(results);
 }
