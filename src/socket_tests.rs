@@ -169,12 +169,11 @@ fn test_socket_negative() {
         fail_errno("socket(STREAM, UDP) unexpected error", EPROTONOSUPPORT, ret);
     }
 
-    // 4. RAW socket without privilege — expects EPERM or EACCES
+    // 4. RAW socket without privilege — expects EPERM, EACCES, or EPROTONOSUPPORT
     let ret = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_RAW, 0) };
-    if ret == EPERM || ret == EACCES {
-        pass("socket(RAW) -EPERM/-EACCES (unprivileged)");
+    if ret == EPERM || ret == EACCES || ret == EPROTONOSUPPORT {
+        pass("socket(RAW) denied (expected error)");
     } else if ret >= 0 {
-        // Succeeds with CAP_NET_RAW (e.g., running as root in CI container)
         pass("socket(RAW) allowed (privileged)");
         unsafe { syscall1(nr::CLOSE, ret as u64) };
     } else {

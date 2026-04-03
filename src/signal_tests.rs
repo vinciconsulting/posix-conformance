@@ -625,6 +625,10 @@ pub fn test_signal_delivery_sigusr1() {
     SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
     SIGNAL_NUMBER.store(0, Ordering::SeqCst);
 
+    // Ensure SIGUSR1 is unblocked (prior tests may leave it blocked)
+    let unblock: u64 = 1 << SIGUSR1;
+    unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
+
     // Install handler
     let mut sa = Sigaction {
         sa_handler: test_sig_handler as *const () as u64,
@@ -737,6 +741,10 @@ pub fn test_signal_delivery_sigusr2() {
 pub fn test_signal_blocked_pending() {
     write_str("\n=== Signal delivery: blocked → pending → delivered on unblock ===\n");
 
+    // Start clean: unblock SIGUSR1
+    let unblock: u64 = 1 << SIGUSR1;
+    unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
+
     SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
     SIGNAL_NUMBER.store(0, Ordering::SeqCst);
 
@@ -841,7 +849,10 @@ pub fn test_signal_delivery_sigalrm() {
 pub fn test_signal_multiple_delivery() {
     write_str("\n=== Signal delivery: multiple signals in sequence ===\n");
 
-    // Count total invocations across multiple signal sends
+    // Ensure SIGUSR1 is unblocked
+    let unblock: u64 = 1 << SIGUSR1;
+    unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
+
     static DELIVERY_COUNT: AtomicU32 = AtomicU32::new(0);
 
     #[unsafe(no_mangle)]
@@ -898,15 +909,7 @@ pub fn test_signal_multiple_delivery() {
 pub fn test_sigpending() {
     write_str("\n=== Signal: sigpending ===\n");
 
-    // Block SIGUSR1, send it, verify it appears in pending set
-    let block_mask: u64 = 1 << SIGUSR1;
-    let mut saved = [0u64; 2];
-    unsafe {
-        syscall4(nr::SIGPROCMASK, SIG_BLOCK, &block_mask as *const _ as u64,
-                 saved.as_mut_ptr() as u64, 8)
-    };
-
-    // Install handler so delivery doesn't kill us on unblock
+    // Install handler FIRST so delivery on unblock doesn't kill us
     let mut sa = Sigaction {
         sa_handler: test_sig_handler as *const () as u64,
         sa_flags: SA_RESTORER,
@@ -914,6 +917,14 @@ pub fn test_sigpending() {
         sa_mask: [0, 0],
     };
     unsafe { syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8) };
+
+    // Save current mask, then explicitly set mask with SIGUSR1 blocked
+    let mut saved = [0u64; 2];
+    let block_mask: u64 = 1 << SIGUSR1;
+    unsafe {
+        syscall4(nr::SIGPROCMASK, SIG_SETMASK, &block_mask as *const _ as u64,
+                 saved.as_mut_ptr() as u64, 8)
+    };
 
     let pid = unsafe { syscall0(nr::GETPID) };
     unsafe { syscall2(nr::KILL, pid as u64, SIGUSR1) };
@@ -950,11 +961,11 @@ pub fn test_sigpending() {
 pub fn test_sigtimedwait() {
     write_str("\n=== Signal: rt_sigtimedwait ===\n");
 
-    // Block SIGUSR1, send it, then sigtimedwait to consume it
+    // Explicitly set mask with SIGUSR1 blocked (deterministic state)
     let block_mask: u64 = 1 << SIGUSR1;
     let mut saved = [0u64; 2];
     unsafe {
-        syscall4(nr::SIGPROCMASK, SIG_BLOCK, &block_mask as *const _ as u64,
+        syscall4(nr::SIGPROCMASK, SIG_SETMASK, &block_mask as *const _ as u64,
                  saved.as_mut_ptr() as u64, 8)
     };
 
