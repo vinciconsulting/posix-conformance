@@ -14,9 +14,10 @@
 #![no_std]
 #![no_main]
 
-use core::arch::asm;
 use core::panic::PanicInfo;
 use core::sync::atomic::AtomicU32;
+
+pub mod arch;
 
 mod memory_tests;
 mod pipe_tests;
@@ -29,6 +30,9 @@ mod process_tests;
 mod fork_tests;
 mod fs_tests;
 mod thread_tests;
+
+// Re-export arch functions so modules can still use crate::syscall3 etc.
+pub use arch::{syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Linux syscall numbers (x86-64)
@@ -136,171 +140,6 @@ pub mod nr {
     pub const PRLIMIT64: u64 = 302;
     pub const GETRANDOM: u64 = 318;
     pub const CLONE3: u64 = 435;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Syscall wrappers
-// ════════════════════════════════════════════════════════════════════════════
-
-/// Raw syscall with 0 arguments.
-///
-/// # Safety
-/// Caller must ensure the syscall number is valid and any side effects are handled.
-#[inline(always)]
-pub unsafe fn syscall0(nr: u64) -> i64 {
-    let ret: i64;
-    unsafe {
-        asm!(
-            "syscall",
-            in("rax") nr,
-            out("rcx") _,
-            out("r11") _,
-            lateout("rax") ret,
-            options(nostack)
-        );
-    }
-    ret
-}
-
-/// Raw syscall with 1 argument.
-///
-/// # Safety
-/// Caller must ensure the syscall number and argument are valid.
-#[inline(always)]
-pub unsafe fn syscall1(nr: u64, a1: u64) -> i64 {
-    let ret: i64;
-    unsafe {
-        asm!(
-            "syscall",
-            in("rax") nr,
-            in("rdi") a1,
-            out("rcx") _,
-            out("r11") _,
-            lateout("rax") ret,
-            options(nostack)
-        );
-    }
-    ret
-}
-
-/// Raw syscall with 2 arguments.
-///
-/// # Safety
-/// Caller must ensure the syscall number and arguments are valid.
-#[inline(always)]
-pub unsafe fn syscall2(nr: u64, a1: u64, a2: u64) -> i64 {
-    let ret: i64;
-    unsafe {
-        asm!(
-            "syscall",
-            in("rax") nr,
-            in("rdi") a1,
-            in("rsi") a2,
-            out("rcx") _,
-            out("r11") _,
-            lateout("rax") ret,
-            options(nostack)
-        );
-    }
-    ret
-}
-
-/// Raw syscall with 3 arguments.
-///
-/// # Safety
-/// Caller must ensure the syscall number and arguments are valid.
-#[inline(always)]
-pub unsafe fn syscall3(nr: u64, a1: u64, a2: u64, a3: u64) -> i64 {
-    let ret: i64;
-    unsafe {
-        asm!(
-            "syscall",
-            in("rax") nr,
-            in("rdi") a1,
-            in("rsi") a2,
-            in("rdx") a3,
-            out("rcx") _,
-            out("r11") _,
-            lateout("rax") ret,
-            options(nostack)
-        );
-    }
-    ret
-}
-
-/// Raw syscall with 4 arguments.
-///
-/// # Safety
-/// Caller must ensure the syscall number and arguments are valid.
-#[inline(always)]
-pub unsafe fn syscall4(nr: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> i64 {
-    let ret: i64;
-    unsafe {
-        asm!(
-            "syscall",
-            in("rax") nr,
-            in("rdi") a1,
-            in("rsi") a2,
-            in("rdx") a3,
-            in("r10") a4,
-            out("rcx") _,
-            out("r11") _,
-            lateout("rax") ret,
-            options(nostack)
-        );
-    }
-    ret
-}
-
-/// Raw syscall with 5 arguments.
-///
-/// # Safety
-/// Caller must ensure the syscall number and arguments are valid.
-#[inline(always)]
-pub unsafe fn syscall5(nr: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
-    let ret: i64;
-    unsafe {
-        asm!(
-            "syscall",
-            in("rax") nr,
-            in("rdi") a1,
-            in("rsi") a2,
-            in("rdx") a3,
-            in("r10") a4,
-            in("r8") a5,
-            out("rcx") _,
-            out("r11") _,
-            lateout("rax") ret,
-            options(nostack)
-        );
-    }
-    ret
-}
-
-/// Raw syscall with 6 arguments.
-///
-/// # Safety
-/// Caller must ensure the syscall number and arguments are valid.
-#[inline(always)]
-pub unsafe fn syscall6(nr: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64) -> i64 {
-    let ret: i64;
-    unsafe {
-        asm!(
-            "syscall",
-            in("rax") nr,
-            in("rdi") a1,
-            in("rsi") a2,
-            in("rdx") a3,
-            in("r10") a4,
-            in("r8") a5,
-            in("r9") a6,
-            out("rcx") _,
-            out("r11") _,
-            lateout("rax") ret,
-            options(nostack)
-        );
-    }
-    ret
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -614,16 +453,10 @@ fn test_tls_fs_relative(results: &mut Results) {
     }
 
     // 4. Access memory via FS-relative addressing (this is what libc does)
-    let val0: u64;
-    let val1: u64;
-    let val2: u64;
-    let val3: u64;
-    unsafe {
-        asm!("mov {}, fs:[0]", out(reg) val0, options(nostack, readonly));
-        asm!("mov {}, fs:[8]", out(reg) val1, options(nostack, readonly));
-        asm!("mov {}, fs:[16]", out(reg) val2, options(nostack, readonly));
-        asm!("mov {}, fs:[24]", out(reg) val3, options(nostack, readonly));
-    }
+    let val0 = unsafe { arch::tls_read(0) };
+    let val1 = unsafe { arch::tls_read(8) };
+    let val2 = unsafe { arch::tls_read(16) };
+    let val3 = unsafe { arch::tls_read(24) };
 
     if val0 == 0xAAAA_BBBB_CCCC_DDDD {
         cat.pass("fs:[0] reads correct value");
@@ -650,9 +483,7 @@ fn test_tls_fs_relative(results: &mut Results) {
     }
 
     // 5. Write via FS-relative addressing
-    unsafe {
-        asm!("mov fs:[0], {}", in(reg) 0xDEAD_BEEF_u64, options(nostack));
-    }
+    unsafe { arch::tls_write(0, 0xDEAD_BEEF) };
 
     // 6. Verify the TLS block was modified
     if tls.val0 == 0xDEAD_BEEF {
@@ -806,21 +637,7 @@ fn test_standard_fds(results: &mut Results) {
 // Entry point
 // ════════════════════════════════════════════════════════════════════════════
 
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
-    // Align stack to 16 bytes (x86-64 ABI requirement)
-    unsafe {
-        asm!(
-            "and rsp, -16",
-            "call {main}",
-            "ud2",
-            main = sym main,
-            options(noreturn)
-        );
-    }
-}
-
-extern "C" fn main() -> ! {
+pub(crate) extern "C" fn main() -> ! {
     write_str("════════════════════════════════════════════════════════════\n");
     write_str("  PSE51/PSE52/PSE53 POSIX Conformance Test Suite v");
     write_str(env!("CARGO_PKG_VERSION"));
