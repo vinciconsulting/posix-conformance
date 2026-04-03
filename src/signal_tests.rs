@@ -621,15 +621,8 @@ extern "C" fn test_sig_handler_usr2(sig: i32) {
 pub fn test_signal_delivery_sigusr1() {
     write_str("\n=== Signal delivery: SIGUSR1 handler invoked ===\n");
 
-    // Reset state
-    SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
-    SIGNAL_NUMBER.store(0, Ordering::SeqCst);
-
-    // Ensure SIGUSR1 is unblocked (prior tests may leave it blocked)
-    let unblock: u64 = 1 << SIGUSR1;
-    unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
-
-    // Install handler
+    // Install handler BEFORE unblocking (if SIGUSR1 is pending with SIG_DFL,
+    // unblocking without a handler would terminate the process)
     let mut sa = Sigaction {
         sa_handler: test_sig_handler as *const () as u64,
         sa_flags: SA_RESTORER,
@@ -644,6 +637,14 @@ pub fn test_signal_delivery_sigusr1() {
         fail_errno("install SIGUSR1 handler", 0, ret);
         return;
     }
+
+    // Now safe to unblock — handler is installed, any pending signal goes to handler
+    let unblock: u64 = 1 << SIGUSR1;
+    unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
+
+    // Reset state after unblock (handler may have fired from prior pending signal)
+    SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
+    SIGNAL_NUMBER.store(0, Ordering::SeqCst);
 
     // Send SIGUSR1 to self
     let pid = unsafe { syscall0(nr::GETPID) };
@@ -741,14 +742,7 @@ pub fn test_signal_delivery_sigusr2() {
 pub fn test_signal_blocked_pending() {
     write_str("\n=== Signal delivery: blocked → pending → delivered on unblock ===\n");
 
-    // Start clean: unblock SIGUSR1
-    let unblock: u64 = 1 << SIGUSR1;
-    unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
-
-    SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
-    SIGNAL_NUMBER.store(0, Ordering::SeqCst);
-
-    // Install handler for SIGUSR1
+    // Install handler FIRST (safe to unblock after)
     let mut sa = Sigaction {
         sa_handler: test_sig_handler as *const () as u64,
         sa_flags: SA_RESTORER,
@@ -762,6 +756,12 @@ pub fn test_signal_blocked_pending() {
         fail_errno("install handler for pending test", 0, ret);
         return;
     }
+
+    // Unblock to drain any stale pending SIGUSR1, then reset state
+    let unblock: u64 = 1 << SIGUSR1;
+    unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
+    SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
+    SIGNAL_NUMBER.store(0, Ordering::SeqCst);
 
     // Block SIGUSR1
     let block_mask: u64 = 1 << SIGUSR1;
@@ -849,10 +849,6 @@ pub fn test_signal_delivery_sigalrm() {
 pub fn test_signal_multiple_delivery() {
     write_str("\n=== Signal delivery: multiple signals in sequence ===\n");
 
-    // Ensure SIGUSR1 is unblocked
-    let unblock: u64 = 1 << SIGUSR1;
-    unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
-
     static DELIVERY_COUNT: AtomicU32 = AtomicU32::new(0);
 
     #[unsafe(no_mangle)]
@@ -860,18 +856,21 @@ pub fn test_signal_multiple_delivery() {
         DELIVERY_COUNT.fetch_add(1, Ordering::SeqCst);
     }
 
-    DELIVERY_COUNT.store(0, Ordering::SeqCst);
-
+    // Install handler BEFORE unblocking
     let mut sa = Sigaction {
         sa_handler: counting_handler as *const () as u64,
         sa_flags: SA_RESTORER,
         sa_restorer: sig_restorer as *const () as u64,
         sa_mask: [0, 0],
     };
-
     unsafe {
         syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8)
     };
+
+    // Now safe to unblock and drain any stale pending SIGUSR1
+    let unblock: u64 = 1 << SIGUSR1;
+    unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
+    DELIVERY_COUNT.store(0, Ordering::SeqCst);
 
     let pid = unsafe { syscall0(nr::GETPID) };
 
