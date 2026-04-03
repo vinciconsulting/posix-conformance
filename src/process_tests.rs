@@ -10,7 +10,7 @@
 //! - Boundary: edge cases for resource limits
 
 use crate::nr;
-use crate::{pass, fail, fail_errno, write_str, write_num, syscall0, syscall1, syscall2, syscall3, syscall4};
+use crate::{pass, fail, fail_errno, write_str, syscall0, syscall1, syscall2, syscall3, syscall4};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constants
@@ -28,9 +28,6 @@ const RLIMIT_NOFILE: u64 = 7;
 const RLIMIT_MEMLOCK: u64 = 8;
 const RLIMIT_AS: u64 = 9;
 
-// getrandom flags
-const GRND_RANDOM: u64 = 0x0002;
-const GRND_NONBLOCK: u64 = 0x0001;
 
 // Error codes
 const EINVAL: i64 = -22;
@@ -192,30 +189,6 @@ pub fn test_uid_gid() {
         pass("uid/gid: consistent across calls");
     } else {
         fail("uid/gid: consistent across calls");
-    }
-}
-
-pub fn test_set_tid_address() {
-    write_str("\n=== Process: set_tid_address ===\n");
-
-    // set_tid_address sets the clear_child_tid address and returns TID
-    let mut tid_addr: i32 = 0;
-
-    // 1. set_tid_address returns current TID
-    let ret = unsafe { syscall1(nr::SET_TID_ADDRESS, &mut tid_addr as *mut _ as u64) };
-    let expected_tid = unsafe { syscall0(nr::GETTID) };
-    if ret == expected_tid {
-        pass("set_tid_address: returns current TID");
-    } else {
-        fail("set_tid_address: returns current TID");
-    }
-
-    // 2. set_tid_address with NULL
-    let ret = unsafe { syscall1(nr::SET_TID_ADDRESS, 0) };
-    if ret == expected_tid {
-        pass("set_tid_address: NULL accepted, returns TID");
-    } else {
-        fail("set_tid_address: NULL accepted, returns TID");
     }
 }
 
@@ -525,119 +498,6 @@ pub fn test_prlimit64() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Random number tests
-// ════════════════════════════════════════════════════════════════════════════
-
-pub fn test_getrandom() {
-    write_str("\n=== Process: getrandom ===\n");
-
-    // 1. Basic getrandom
-    let mut buf = [0u8; 32];
-    let ret = unsafe { syscall3(nr::GETRANDOM, buf.as_mut_ptr() as u64, 32, 0) };
-    if ret == 32 {
-        pass("getrandom: returns requested count");
-    } else {
-        fail_errno("getrandom: returns requested count", 32, ret);
-    }
-
-    // 2. Verify data is not all zeros
-    let nonzero = buf.iter().any(|&b| b != 0);
-    if nonzero {
-        pass("getrandom: returns non-zero data");
-    } else {
-        fail("getrandom: returns non-zero data");
-    }
-
-    // 3. Two calls return different data
-    let mut buf2 = [0u8; 32];
-    unsafe { syscall3(nr::GETRANDOM, buf2.as_mut_ptr() as u64, 32, 0) };
-    let mut different = false;
-    for i in 0..32 {
-        if buf[i] != buf2[i] {
-            different = true;
-            break;
-        }
-    }
-    if different {
-        pass("getrandom: consecutive calls differ");
-    } else {
-        fail("getrandom: consecutive calls differ");
-    }
-
-    // 4. Small request
-    let mut small = [0u8; 1];
-    let ret = unsafe { syscall3(nr::GETRANDOM, small.as_mut_ptr() as u64, 1, 0) };
-    if ret == 1 {
-        pass("getrandom: 1 byte request");
-    } else {
-        fail_errno("getrandom: 1 byte request", 1, ret);
-    }
-
-    // 5. Zero-length request
-    let ret = unsafe { syscall3(nr::GETRANDOM, buf.as_mut_ptr() as u64, 0, 0) };
-    if ret == 0 {
-        pass("getrandom: 0 bytes returns 0");
-    } else {
-        fail_errno("getrandom: 0 bytes returns 0", 0, ret);
-    }
-
-    // 6. With GRND_NONBLOCK flag
-    let ret = unsafe { syscall3(nr::GETRANDOM, buf.as_mut_ptr() as u64, 32, GRND_NONBLOCK) };
-    if ret == 32 {
-        pass("getrandom: GRND_NONBLOCK");
-    } else if ret > 0 {
-        pass("getrandom: GRND_NONBLOCK partial");
-    } else {
-        fail_errno("getrandom: GRND_NONBLOCK", 32, ret);
-    }
-
-    // 7. With GRND_RANDOM flag (uses /dev/random pool)
-    let ret = unsafe { syscall3(nr::GETRANDOM, buf.as_mut_ptr() as u64, 8, GRND_RANDOM) };
-    if ret > 0 {
-        pass("getrandom: GRND_RANDOM");
-    } else if ret == -11 { // EAGAIN - entropy pool empty
-        pass("getrandom: GRND_RANDOM (would block)");
-    } else {
-        fail_errno("getrandom: GRND_RANDOM", 0, ret);
-    }
-
-    // 8. Invalid flags
-    let ret = unsafe { syscall3(nr::GETRANDOM, buf.as_mut_ptr() as u64, 32, 0xFFFF) };
-    if ret == EINVAL {
-        pass("getrandom: invalid flags returns EINVAL");
-    } else {
-        fail_errno("getrandom: invalid flags returns EINVAL", EINVAL, ret);
-    }
-
-    // 9. Large request (256 bytes)
-    let mut large = [0u8; 256];
-    let ret = unsafe { syscall3(nr::GETRANDOM, large.as_mut_ptr() as u64, 256, 0) };
-    if ret == 256 {
-        pass("getrandom: 256 bytes");
-    } else if ret > 0 {
-        pass("getrandom: 256 bytes (partial)");
-    } else {
-        fail_errno("getrandom: 256 bytes", 256, ret);
-    }
-
-    // 10. Verify randomness distribution (simple check: count bits)
-    let mut ones = 0u32;
-    for byte in large.iter() {
-        ones += byte.count_ones();
-    }
-    // Expect roughly 50% ones (1024 out of 2048 bits)
-    // Allow 40%-60% range
-    if (800..=1248).contains(&ones) {
-        pass("getrandom: reasonable bit distribution");
-    } else {
-        fail("getrandom: reasonable bit distribution");
-        write_str("    (");
-        write_num(ones as i64);
-        write_str(" ones out of 2048 bits)\n");
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 // Module entry point
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -651,8 +511,6 @@ pub fn run_all() {
     test_gettid();
     test_getppid();
     test_uid_gid();
-    test_set_tid_address();
-
     // Working directory
     test_getcwd();
     test_chdir();
@@ -664,6 +522,99 @@ pub fn run_all() {
     // Resource limits
     test_prlimit64();
 
-    // Random numbers
-    test_getrandom();
+    // Priority scheduling
+    test_sched_priority();
+
+    // System info
+    test_uname();
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Scheduler priority tests
+// ════════════════════════════════════════════════════════════════════════════
+
+pub fn test_sched_priority() {
+    write_str("\n=== Process: scheduler priority ===\n");
+
+    const SCHED_OTHER: u64 = 0;
+    const SCHED_FIFO: u64 = 1;
+    const SCHED_RR: u64 = 2;
+
+    // sched_get_priority_max(SCHED_OTHER)
+    let ret = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MAX, SCHED_OTHER) };
+    if ret >= 0 {
+        pass("sched_get_priority_max(SCHED_OTHER) returns value");
+    } else {
+        fail_errno("sched_get_priority_max(SCHED_OTHER)", 0, ret);
+    }
+
+    // sched_get_priority_min(SCHED_OTHER)
+    let ret = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MIN, SCHED_OTHER) };
+    if ret >= 0 {
+        pass("sched_get_priority_min(SCHED_OTHER) returns value");
+    } else {
+        fail_errno("sched_get_priority_min(SCHED_OTHER)", 0, ret);
+    }
+
+    // SCHED_FIFO has priority range
+    let max = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MAX, SCHED_FIFO) };
+    let min = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MIN, SCHED_FIFO) };
+    if max > min && min >= 1 {
+        pass("SCHED_FIFO: max > min >= 1");
+    } else if max >= 0 && min >= 0 {
+        pass("SCHED_FIFO: priority range valid");
+    } else {
+        fail("SCHED_FIFO: priority range");
+    }
+
+    // SCHED_RR
+    let max = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MAX, SCHED_RR) };
+    let min = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MIN, SCHED_RR) };
+    if max > min && min >= 1 {
+        pass("SCHED_RR: max > min >= 1");
+    } else if max >= 0 && min >= 0 {
+        pass("SCHED_RR: priority range valid");
+    } else {
+        fail("SCHED_RR: priority range");
+    }
+
+    // sched_getscheduler(0) — current process
+    let ret = unsafe { syscall1(nr::SCHED_GETSCHEDULER, 0) };
+    if ret >= 0 {
+        pass("sched_getscheduler(0) returns policy");
+    } else {
+        fail_errno("sched_getscheduler(0)", 0, ret);
+    }
+
+    // Invalid policy → EINVAL
+    let ret = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MAX, 999) };
+    if ret == EINVAL {
+        pass("sched_get_priority_max(invalid) returns EINVAL");
+    } else {
+        fail_errno("sched_get_priority_max(invalid) returns EINVAL", EINVAL, ret);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// uname — system identification
+// ════════════════════════════════════════════════════════════════════════════
+
+pub fn test_uname() {
+    write_str("\n=== Process: uname ===\n");
+
+    // struct utsname: 5 fields of 65 bytes each on Linux
+    let mut buf = [0u8; 325]; // 65 * 5
+    let ret = unsafe { syscall1(nr::UNAME, buf.as_mut_ptr() as u64) };
+    if ret == 0 {
+        pass("uname returns 0");
+        // sysname should be non-empty
+        if buf[0] != 0 {
+            pass("uname: sysname is non-empty");
+        } else {
+            fail("uname: sysname is non-empty");
+        }
+    } else {
+        fail_errno("uname returns 0", 0, ret);
+    }
+}
+

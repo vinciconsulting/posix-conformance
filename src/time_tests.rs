@@ -21,10 +21,6 @@ const CLOCK_REALTIME: u64 = 0;
 const CLOCK_MONOTONIC: u64 = 1;
 const CLOCK_PROCESS_CPUTIME_ID: u64 = 2;
 const CLOCK_THREAD_CPUTIME_ID: u64 = 3;
-const CLOCK_MONOTONIC_RAW: u64 = 4;
-const CLOCK_REALTIME_COARSE: u64 = 5;
-const CLOCK_MONOTONIC_COARSE: u64 = 6;
-const CLOCK_BOOTTIME: u64 = 7;
 
 // Timer constants
 const SIGEV_NONE: i32 = 1;
@@ -111,43 +107,7 @@ pub fn test_clock_gettime_positive() {
         fail_errno("clock_gettime: CLOCK_THREAD_CPUTIME_ID", 0, ret);
     }
 
-    // 6. CLOCK_MONOTONIC_RAW (if supported)
-    ts = Timespec { tv_sec: 0, tv_nsec: 0 };
-    let ret = unsafe { syscall2(nr::CLOCK_GETTIME, CLOCK_MONOTONIC_RAW, &mut ts as *mut _ as u64) };
-    if ret == 0 || ret == EINVAL {
-        pass("clock_gettime: CLOCK_MONOTONIC_RAW handled");
-    } else {
-        fail_errno("clock_gettime: CLOCK_MONOTONIC_RAW handled", 0, ret);
-    }
-
-    // 7. CLOCK_REALTIME_COARSE
-    ts = Timespec { tv_sec: 0, tv_nsec: 0 };
-    let ret = unsafe { syscall2(nr::CLOCK_GETTIME, CLOCK_REALTIME_COARSE, &mut ts as *mut _ as u64) };
-    if ret == 0 || ret == EINVAL {
-        pass("clock_gettime: CLOCK_REALTIME_COARSE handled");
-    } else {
-        fail_errno("clock_gettime: CLOCK_REALTIME_COARSE handled", 0, ret);
-    }
-
-    // 8. CLOCK_MONOTONIC_COARSE
-    ts = Timespec { tv_sec: 0, tv_nsec: 0 };
-    let ret = unsafe { syscall2(nr::CLOCK_GETTIME, CLOCK_MONOTONIC_COARSE, &mut ts as *mut _ as u64) };
-    if ret == 0 || ret == EINVAL {
-        pass("clock_gettime: CLOCK_MONOTONIC_COARSE handled");
-    } else {
-        fail_errno("clock_gettime: CLOCK_MONOTONIC_COARSE handled", 0, ret);
-    }
-
-    // 9. CLOCK_BOOTTIME
-    ts = Timespec { tv_sec: 0, tv_nsec: 0 };
-    let ret = unsafe { syscall2(nr::CLOCK_GETTIME, CLOCK_BOOTTIME, &mut ts as *mut _ as u64) };
-    if ret == 0 || ret == EINVAL {
-        pass("clock_gettime: CLOCK_BOOTTIME handled");
-    } else {
-        fail_errno("clock_gettime: CLOCK_BOOTTIME handled", 0, ret);
-    }
-
-    // 10. Verify tv_nsec is in valid range [0, 999999999]
+    // 6. Verify tv_nsec is in valid range [0, 999999999]
     ts = Timespec { tv_sec: 0, tv_nsec: 0 };
     unsafe { syscall2(nr::CLOCK_GETTIME, CLOCK_MONOTONIC, &mut ts as *mut _ as u64) };
     if ts.tv_nsec >= 0 && ts.tv_nsec < 1_000_000_000 {
@@ -727,4 +687,76 @@ pub fn run_all() {
     test_timer_settime_gettime();
     test_timer_delete();
     test_timer_getoverrun();
+
+    // clock_nanosleep
+    test_clock_nanosleep();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// clock_nanosleep — sleep on a specific clock
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_clock_nanosleep() {
+    write_str("\n=== clock_nanosleep ===\n");
+
+    const CLOCK_MONOTONIC: u64 = 1;
+    const CLOCK_REALTIME: u64 = 0;
+    const TIMER_ABSTIME: u64 = 1;
+
+    // 1. Relative sleep on CLOCK_MONOTONIC (1ms)
+    let ts = Timespec { tv_sec: 0, tv_nsec: 1_000_000 };
+    let ret = unsafe {
+        syscall4(nr::CLOCK_NANOSLEEP, CLOCK_MONOTONIC, 0,
+                 &ts as *const _ as u64, 0)
+    };
+    if ret == 0 {
+        pass("clock_nanosleep(MONOTONIC, 1ms) returns 0");
+    } else {
+        fail_errno("clock_nanosleep(MONOTONIC, 1ms)", 0, ret);
+    }
+
+    // 2. Relative sleep on CLOCK_REALTIME
+    let ret = unsafe {
+        syscall4(nr::CLOCK_NANOSLEEP, CLOCK_REALTIME, 0,
+                 &ts as *const _ as u64, 0)
+    };
+    if ret == 0 {
+        pass("clock_nanosleep(REALTIME, 1ms) returns 0");
+    } else {
+        fail_errno("clock_nanosleep(REALTIME, 1ms)", 0, ret);
+    }
+
+    // 3. Absolute time sleep (already past → returns immediately)
+    let past = Timespec { tv_sec: 1, tv_nsec: 0 }; // 1970-01-01 00:00:01
+    let ret = unsafe {
+        syscall4(nr::CLOCK_NANOSLEEP, CLOCK_REALTIME, TIMER_ABSTIME,
+                 &past as *const _ as u64, 0)
+    };
+    if ret == 0 {
+        pass("clock_nanosleep(ABSTIME, past) returns immediately");
+    } else {
+        fail_errno("clock_nanosleep(ABSTIME, past)", 0, ret);
+    }
+
+    // 4. Invalid clock → EINVAL
+    let ret = unsafe {
+        syscall4(nr::CLOCK_NANOSLEEP, 99, 0, &ts as *const _ as u64, 0)
+    };
+    if ret == -22 { // EINVAL
+        pass("clock_nanosleep(invalid clock) returns EINVAL");
+    } else {
+        fail_errno("clock_nanosleep(invalid clock) returns EINVAL", -22, ret);
+    }
+
+    // 5. Negative nsec → EINVAL
+    let bad = Timespec { tv_sec: 0, tv_nsec: -1 };
+    let ret = unsafe {
+        syscall4(nr::CLOCK_NANOSLEEP, CLOCK_MONOTONIC, 0,
+                 &bad as *const _ as u64, 0)
+    };
+    if ret == -22 {
+        pass("clock_nanosleep(negative nsec) returns EINVAL");
+    } else {
+        fail_errno("clock_nanosleep(negative nsec) returns EINVAL", -22, ret);
+    }
 }

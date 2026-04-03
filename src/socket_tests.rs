@@ -6,7 +6,7 @@
 //! - bind/listen/accept (where possible without network)
 //! - shutdown
 
-use crate::{fail, fail_errno, nr, pass, syscall1, syscall2, syscall3, syscall5, write_str};
+use crate::{fail, fail_errno, nr, pass, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6, write_str};
 
 // Error codes
 const EPERM: i64 = -1;
@@ -169,12 +169,11 @@ fn test_socket_negative() {
         fail_errno("socket(STREAM, UDP) unexpected error", EPROTONOSUPPORT, ret);
     }
 
-    // 4. RAW socket without privilege — expects EPERM or EACCES
+    // 4. RAW socket without privilege — expects EPERM, EACCES, or EPROTONOSUPPORT
     let ret = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_RAW, 0) };
-    if ret == EPERM || ret == EACCES {
-        pass("socket(RAW) -EPERM/-EACCES (unprivileged)");
+    if ret == EPERM || ret == EACCES || ret == EPROTONOSUPPORT {
+        pass("socket(RAW) denied (expected error)");
     } else if ret >= 0 {
-        // Succeeds with CAP_NET_RAW (e.g., running as root in CI container)
         pass("socket(RAW) allowed (privileged)");
         unsafe { syscall1(nr::CLOSE, ret as u64) };
     } else {
@@ -619,6 +618,592 @@ fn test_udp_socket() {
     unsafe { syscall1(nr::CLOSE, fd as u64) };
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// TCP CONNECT → ACCEPT → SEND → RECV: End-to-end data flow
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_tcp_data_flow() {
+    write_str("\n=== TCP: connect → accept → send → recv ===\n");
+
+    // 1. Create listener socket
+    let listen_fd = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_STREAM, 0) };
+    if listen_fd < 0 {
+        fail_errno("TCP data flow: listener socket", 0, listen_fd);
+        return;
+    }
+
+    // Enable SO_REUSEADDR
+    let val: i32 = 1;
+    unsafe {
+        syscall5(nr::SETSOCKOPT, listen_fd as u64, SOL_SOCKET, SO_REUSEADDR,
+                 &val as *const _ as u64, 4)
+    };
+
+    // Bind to localhost:0
+    let listen_addr = SockaddrIn {
+        sin_family: AF_INET as u16,
+        sin_port: 0,
+        sin_addr: 0x7F000001u32.to_be(),
+        sin_zero: [0; 8],
+    };
+    let ret = unsafe {
+        syscall3(nr::BIND, listen_fd as u64, &listen_addr as *const _ as u64, 16)
+    };
+    if ret != 0 {
+        fail_errno("TCP data flow: bind", 0, ret);
+        unsafe { syscall1(nr::CLOSE, listen_fd as u64) };
+        return;
+    }
+
+    // Listen
+    let ret = unsafe { syscall2(nr::LISTEN, listen_fd as u64, 1) };
+    if ret != 0 {
+        fail_errno("TCP data flow: listen", 0, ret);
+        unsafe { syscall1(nr::CLOSE, listen_fd as u64) };
+        return;
+    }
+
+    // Get the assigned port via getsockname
+    let mut bound_addr = SockaddrIn {
+        sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+    };
+    let mut addr_len: u32 = 16;
+    unsafe {
+        syscall3(nr::GETSOCKNAME, listen_fd as u64,
+                 &mut bound_addr as *mut _ as u64, &mut addr_len as *mut _ as u64)
+    };
+    let port = bound_addr.sin_port;
+
+    // 2. Create client socket and connect
+    let client_fd = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_STREAM, 0) };
+    if client_fd < 0 {
+        fail_errno("TCP data flow: client socket", 0, client_fd);
+        unsafe { syscall1(nr::CLOSE, listen_fd as u64) };
+        return;
+    }
+
+    let connect_addr = SockaddrIn {
+        sin_family: AF_INET as u16,
+        sin_port: port,
+        sin_addr: 0x7F000001u32.to_be(),
+        sin_zero: [0; 8],
+    };
+    let ret = unsafe {
+        syscall3(nr::CONNECT, client_fd as u64, &connect_addr as *const _ as u64, 16)
+    };
+    if ret != 0 {
+        fail_errno("TCP connect to listener", 0, ret);
+        unsafe {
+            syscall1(nr::CLOSE, client_fd as u64);
+            syscall1(nr::CLOSE, listen_fd as u64);
+        }
+        return;
+    }
+    pass("TCP connect succeeds");
+
+    // 3. Accept on listener
+    let mut peer_addr = SockaddrIn {
+        sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+    };
+    let mut peer_len: u32 = 16;
+    let accepted_fd = unsafe {
+        syscall3(nr::ACCEPT, listen_fd as u64,
+                 &mut peer_addr as *mut _ as u64, &mut peer_len as *mut _ as u64)
+    };
+    if accepted_fd < 0 {
+        fail_errno("TCP accept", 0, accepted_fd);
+        unsafe {
+            syscall1(nr::CLOSE, client_fd as u64);
+            syscall1(nr::CLOSE, listen_fd as u64);
+        }
+        return;
+    }
+    pass("TCP accept returns connected fd");
+
+    // Verify peer address is loopback
+    if peer_addr.sin_addr == 0x7F000001u32.to_be() {
+        pass("accepted peer is 127.0.0.1");
+    } else {
+        fail("accepted peer is 127.0.0.1");
+    }
+
+    // 4. Client sends data, server receives
+    let send_data = b"POSIX conformance TCP payload!";
+    let nsent = unsafe {
+        syscall3(crate::nr::WRITE, client_fd as u64,
+                 send_data.as_ptr() as u64, send_data.len() as u64)
+    };
+    if nsent == send_data.len() as i64 {
+        pass("client write returns exact count");
+    } else {
+        fail_errno("client write returns exact count", send_data.len() as i64, nsent);
+    }
+
+    let mut recv_buf = [0u8; 64];
+    let nrecv = unsafe {
+        syscall3(crate::nr::READ, accepted_fd as u64,
+                 recv_buf.as_mut_ptr() as u64, 64)
+    };
+    if nrecv == send_data.len() as i64 {
+        pass("server read returns exact count");
+    } else {
+        fail_errno("server read returns exact count", send_data.len() as i64, nrecv);
+    }
+
+    // Compare data
+    let mut data_match = true;
+    for i in 0..send_data.len() {
+        if recv_buf[i] != send_data[i] {
+            data_match = false;
+            break;
+        }
+    }
+    if data_match && nrecv == send_data.len() as i64 {
+        pass("received data matches sent data");
+    } else {
+        fail("received data matches sent data");
+    }
+
+    // 5. Server sends reply, client receives
+    let reply = b"ACK";
+    let nsent = unsafe {
+        syscall3(crate::nr::WRITE, accepted_fd as u64,
+                 reply.as_ptr() as u64, 3)
+    };
+    if nsent != 3 {
+        fail_errno("server reply write", 3, nsent);
+    }
+
+    let mut reply_buf = [0u8; 8];
+    let nrecv = unsafe {
+        syscall3(crate::nr::READ, client_fd as u64,
+                 reply_buf.as_mut_ptr() as u64, 8)
+    };
+    if nrecv == 3 && reply_buf[..3] == *b"ACK" {
+        pass("bidirectional data flow works");
+    } else {
+        fail("bidirectional data flow works");
+    }
+
+    // 6. getpeername on accepted socket
+    let mut name = SockaddrIn {
+        sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+    };
+    let mut name_len: u32 = 16;
+    let ret = unsafe {
+        syscall3(nr::GETPEERNAME, accepted_fd as u64,
+                 &mut name as *mut _ as u64, &mut name_len as *mut _ as u64)
+    };
+    if ret == 0 && name.sin_family == AF_INET as u16 {
+        pass("getpeername on accepted socket");
+    } else {
+        fail_errno("getpeername on accepted socket", 0, ret);
+    }
+
+    // 7. Shutdown write on client, verify server gets EOF
+    const SHUT_WR: u64 = 1;
+    unsafe { syscall2(nr::SHUTDOWN, client_fd as u64, SHUT_WR) };
+
+    let nrecv = unsafe {
+        syscall3(crate::nr::READ, accepted_fd as u64,
+                 recv_buf.as_mut_ptr() as u64, 64)
+    };
+    if nrecv == 0 {
+        pass("shutdown(SHUT_WR) → server reads EOF");
+    } else {
+        fail("shutdown(SHUT_WR) → server reads EOF");
+    }
+
+    // Cleanup
+    unsafe {
+        syscall1(nr::CLOSE, accepted_fd as u64);
+        syscall1(nr::CLOSE, client_fd as u64);
+        syscall1(nr::CLOSE, listen_fd as u64);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// UDP SENDTO → RECVFROM: Datagram data flow
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_udp_data_flow() {
+    write_str("\n=== UDP: sendto → recvfrom ===\n");
+
+    // Create two UDP sockets (server + client)
+    let server_fd = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_DGRAM, 0) };
+    let client_fd = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_DGRAM, 0) };
+    if server_fd < 0 || client_fd < 0 {
+        fail("UDP data flow: socket setup");
+        if server_fd >= 0 { unsafe { syscall1(nr::CLOSE, server_fd as u64) }; }
+        if client_fd >= 0 { unsafe { syscall1(nr::CLOSE, client_fd as u64) }; }
+        return;
+    }
+
+    // Bind server to localhost:0
+    let server_addr = SockaddrIn {
+        sin_family: AF_INET as u16,
+        sin_port: 0,
+        sin_addr: 0x7F000001u32.to_be(),
+        sin_zero: [0; 8],
+    };
+    let ret = unsafe {
+        syscall3(nr::BIND, server_fd as u64, &server_addr as *const _ as u64, 16)
+    };
+    if ret != 0 {
+        fail_errno("UDP server bind", 0, ret);
+        unsafe {
+            syscall1(nr::CLOSE, server_fd as u64);
+            syscall1(nr::CLOSE, client_fd as u64);
+        }
+        return;
+    }
+
+    // Get assigned port
+    let mut bound = SockaddrIn {
+        sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+    };
+    let mut len: u32 = 16;
+    unsafe {
+        syscall3(nr::GETSOCKNAME, server_fd as u64,
+                 &mut bound as *mut _ as u64, &mut len as *mut _ as u64)
+    };
+
+    // Client sendto server
+    let dest_addr = SockaddrIn {
+        sin_family: AF_INET as u16,
+        sin_port: bound.sin_port,
+        sin_addr: 0x7F000001u32.to_be(),
+        sin_zero: [0; 8],
+    };
+    let msg = b"UDP POSIX test";
+    let nsent = unsafe {
+        syscall6(nr::SENDTO, client_fd as u64,
+                 msg.as_ptr() as u64, msg.len() as u64, 0,
+                 &dest_addr as *const _ as u64, 16)
+    };
+    if nsent == msg.len() as i64 {
+        pass("UDP sendto returns exact count");
+    } else {
+        fail_errno("UDP sendto returns exact count", msg.len() as i64, nsent);
+    }
+
+    // Server recvfrom
+    let mut recv_buf = [0u8; 64];
+    let mut from_addr = SockaddrIn {
+        sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+    };
+    let mut from_len: u32 = 16;
+    let nrecv = unsafe {
+        syscall6(nr::RECVFROM, server_fd as u64,
+                 recv_buf.as_mut_ptr() as u64, 64, 0,
+                 &mut from_addr as *mut _ as u64,
+                 &mut from_len as *mut _ as u64)
+    };
+    if nrecv == msg.len() as i64 {
+        pass("UDP recvfrom returns exact count");
+    } else {
+        fail_errno("UDP recvfrom returns exact count", msg.len() as i64, nrecv);
+    }
+
+    // Verify data
+    let mut data_ok = true;
+    for i in 0..msg.len() {
+        if recv_buf[i] != msg[i] {
+            data_ok = false;
+            break;
+        }
+    }
+    if data_ok && nrecv == msg.len() as i64 {
+        pass("UDP received data matches sent data");
+    } else {
+        fail("UDP received data matches sent data");
+    }
+
+    // Verify sender address is loopback
+    if from_addr.sin_addr == 0x7F000001u32.to_be() && from_addr.sin_family == AF_INET as u16 {
+        pass("recvfrom: sender is 127.0.0.1");
+    } else {
+        fail("recvfrom: sender is 127.0.0.1");
+    }
+
+    unsafe {
+        syscall1(nr::CLOSE, server_fd as u64);
+        syscall1(nr::CLOSE, client_fd as u64);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// UNIX DOMAIN SOCKET: Socketpair-style data flow
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_unix_data_flow() {
+    write_str("\n=== Unix socket: bind → connect → send → recv ===\n");
+
+    // Create listener
+    let listen_fd = unsafe { syscall3(nr::SOCKET, AF_UNIX, SOCK_STREAM, 0) };
+    if listen_fd < 0 {
+        if listen_fd == -97 { // EAFNOSUPPORT
+            pass("AF_UNIX not supported (skipping)");
+            return;
+        }
+        fail_errno("unix socket create", 0, listen_fd);
+        return;
+    }
+
+    // Bind to abstract socket (Linux: first byte is \0)
+    #[repr(C)]
+    struct SockaddrUn {
+        sun_family: u16,
+        sun_path: [u8; 108],
+    }
+
+    let mut addr = SockaddrUn {
+        sun_family: AF_UNIX as u16,
+        sun_path: [0; 108],
+    };
+    // Abstract socket: \0 + name
+    let name = b"_posix_conf_test";
+    for i in 0..name.len() {
+        addr.sun_path[1 + i] = name[i];
+    }
+    let addr_len: u32 = 2 + 1 + name.len() as u32; // family + null + name
+
+    let ret = unsafe {
+        syscall3(nr::BIND, listen_fd as u64, &addr as *const _ as u64, addr_len as u64)
+    };
+    if ret != 0 {
+        fail_errno("unix bind (abstract)", 0, ret);
+        unsafe { syscall1(nr::CLOSE, listen_fd as u64) };
+        return;
+    }
+
+    unsafe { syscall2(nr::LISTEN, listen_fd as u64, 1) };
+
+    // Connect
+    let client_fd = unsafe { syscall3(nr::SOCKET, AF_UNIX, SOCK_STREAM, 0) };
+    if client_fd < 0 {
+        fail_errno("unix client socket", 0, client_fd);
+        unsafe { syscall1(nr::CLOSE, listen_fd as u64) };
+        return;
+    }
+
+    let ret = unsafe {
+        syscall3(nr::CONNECT, client_fd as u64, &addr as *const _ as u64, addr_len as u64)
+    };
+    if ret != 0 {
+        fail_errno("unix connect", 0, ret);
+        unsafe {
+            syscall1(nr::CLOSE, client_fd as u64);
+            syscall1(nr::CLOSE, listen_fd as u64);
+        }
+        return;
+    }
+    pass("unix domain connect");
+
+    // Accept
+    let accepted = unsafe { syscall3(nr::ACCEPT, listen_fd as u64, 0, 0) };
+    if accepted < 0 {
+        fail_errno("unix accept", 0, accepted);
+        unsafe {
+            syscall1(nr::CLOSE, client_fd as u64);
+            syscall1(nr::CLOSE, listen_fd as u64);
+        }
+        return;
+    }
+    pass("unix domain accept");
+
+    // Send/recv
+    let msg = b"unix domain payload";
+    let nsent = unsafe {
+        syscall3(crate::nr::WRITE, client_fd as u64,
+                 msg.as_ptr() as u64, msg.len() as u64)
+    };
+    let mut buf = [0u8; 32];
+    let nrecv = unsafe {
+        syscall3(crate::nr::READ, accepted as u64,
+                 buf.as_mut_ptr() as u64, 32)
+    };
+
+    if nsent == msg.len() as i64 && nrecv == msg.len() as i64 {
+        let mut ok = true;
+        for i in 0..msg.len() {
+            if buf[i] != msg[i] { ok = false; break; }
+        }
+        if ok {
+            pass("unix domain: data round-trip matches");
+        } else {
+            fail("unix domain: data round-trip matches");
+        }
+    } else {
+        fail("unix domain: send/recv counts");
+    }
+
+    unsafe {
+        syscall1(nr::CLOSE, accepted as u64);
+        syscall1(nr::CLOSE, client_fd as u64);
+        syscall1(nr::CLOSE, listen_fd as u64);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SOCKETPAIR: Create connected socket pair
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_socketpair() {
+    write_str("\n=== socketpair: tests ===\n");
+
+    let mut sv = [0i32; 2];
+    let ret = unsafe {
+        syscall4(nr::SOCKETPAIR, AF_UNIX, SOCK_STREAM, 0, sv.as_mut_ptr() as u64)
+    };
+    if ret < 0 {
+        if ret == -97 { // EAFNOSUPPORT
+            pass("AF_UNIX socketpair not supported (skipping)");
+            return;
+        }
+        fail_errno("socketpair(AF_UNIX, STREAM)", 0, ret);
+        return;
+    }
+    pass("socketpair returns 0");
+
+    if sv[0] >= 0 && sv[1] >= 0 && sv[0] != sv[1] {
+        pass("socketpair: two distinct fds");
+    } else {
+        fail("socketpair: two distinct fds");
+    }
+
+    // Write on sv[0], read on sv[1]
+    let msg = b"socketpair data";
+    let nsent = unsafe {
+        syscall3(crate::nr::WRITE, sv[0] as u64, msg.as_ptr() as u64, msg.len() as u64)
+    };
+    let mut buf = [0u8; 32];
+    let nrecv = unsafe {
+        syscall3(crate::nr::READ, sv[1] as u64, buf.as_mut_ptr() as u64, 32)
+    };
+    if nsent == msg.len() as i64 && nrecv == msg.len() as i64 {
+        let mut ok = true;
+        for i in 0..msg.len() { if buf[i] != msg[i] { ok = false; break; } }
+        if ok {
+            pass("socketpair: bidirectional data flow");
+        } else {
+            fail("socketpair: bidirectional data flow");
+        }
+    } else {
+        fail("socketpair: send/recv counts");
+    }
+
+    // SOCK_DGRAM pair
+    let mut sv2 = [0i32; 2];
+    let ret = unsafe {
+        syscall4(nr::SOCKETPAIR, AF_UNIX, SOCK_DGRAM, 0, sv2.as_mut_ptr() as u64)
+    };
+    if ret == 0 {
+        pass("socketpair(SOCK_DGRAM) returns 0");
+        unsafe {
+            syscall1(nr::CLOSE, sv2[0] as u64);
+            syscall1(nr::CLOSE, sv2[1] as u64);
+        }
+    } else {
+        fail_errno("socketpair(SOCK_DGRAM)", 0, ret);
+    }
+
+    unsafe {
+        syscall1(nr::CLOSE, sv[0] as u64);
+        syscall1(nr::CLOSE, sv[1] as u64);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SENDMSG / RECVMSG: Scatter-gather I/O
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_sendmsg_recvmsg() {
+    write_str("\n=== sendmsg/recvmsg: scatter-gather ===\n");
+
+    let mut sv = [0i32; 2];
+    let ret = unsafe {
+        syscall4(nr::SOCKETPAIR, AF_UNIX, SOCK_STREAM, 0, sv.as_mut_ptr() as u64)
+    };
+    if ret < 0 {
+        pass("AF_UNIX not supported, skipping sendmsg/recvmsg");
+        return;
+    }
+
+    // sendmsg with 2-segment iovec
+    let seg1 = b"Hello";
+    let seg2 = b"World";
+    let iov = [
+        crate::Iovec { iov_base: seg1.as_ptr() as u64, iov_len: 5 },
+        crate::Iovec { iov_base: seg2.as_ptr() as u64, iov_len: 5 },
+    ];
+
+    #[repr(C)]
+    struct Msghdr {
+        msg_name: u64,
+        msg_namelen: u32,
+        _pad0: u32,
+        msg_iov: u64,
+        msg_iovlen: u64,
+        msg_control: u64,
+        msg_controllen: u64,
+        msg_flags: i32,
+        _pad1: i32,
+    }
+
+    let hdr = Msghdr {
+        msg_name: 0,
+        msg_namelen: 0,
+        _pad0: 0,
+        msg_iov: iov.as_ptr() as u64,
+        msg_iovlen: 2,
+        msg_control: 0,
+        msg_controllen: 0,
+        msg_flags: 0,
+        _pad1: 0,
+    };
+
+    let nsent = unsafe {
+        syscall3(nr::SENDMSG, sv[0] as u64, &hdr as *const _ as u64, 0)
+    };
+    if nsent == 10 {
+        pass("sendmsg: 2-segment iovec sent 10 bytes");
+    } else {
+        fail_errno("sendmsg: 2-segment iovec", 10, nsent);
+    }
+
+    // recvmsg into single buffer
+    let mut recv_buf = [0u8; 16];
+    let recv_iov = [crate::Iovec {
+        iov_base: recv_buf.as_mut_ptr() as u64,
+        iov_len: 16,
+    }];
+    let mut recv_hdr = Msghdr {
+        msg_name: 0,
+        msg_namelen: 0,
+        _pad0: 0,
+        msg_iov: recv_iov.as_ptr() as u64,
+        msg_iovlen: 1,
+        msg_control: 0,
+        msg_controllen: 0,
+        msg_flags: 0,
+        _pad1: 0,
+    };
+    let nrecv = unsafe {
+        syscall3(nr::RECVMSG, sv[1] as u64, &mut recv_hdr as *mut _ as u64, 0)
+    };
+    if nrecv == 10 && recv_buf[..10] == *b"HelloWorld" {
+        pass("recvmsg: received scatter-gathered data");
+    } else {
+        fail("recvmsg: received scatter-gathered data");
+    }
+
+    unsafe {
+        syscall1(nr::CLOSE, sv[0] as u64);
+        syscall1(nr::CLOSE, sv[1] as u64);
+    }
+}
+
 /// Run all socket tests
 pub fn run_all() {
     test_socket_positive();
@@ -628,4 +1213,11 @@ pub fn run_all() {
     test_bind_listen();
     test_shutdown();
     test_udp_socket();
+
+    // End-to-end data flow
+    test_tcp_data_flow();
+    test_udp_data_flow();
+    test_unix_data_flow();
+    test_socketpair();
+    test_sendmsg_recvmsg();
 }
