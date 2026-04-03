@@ -6,7 +6,7 @@
 //! - fstat: positive, negative, struct validation
 //! - fcntl: F_GETFD, F_SETFD, F_GETFL, F_SETFL
 
-use crate::{fail, fail_errno, nr, pass, syscall1, syscall2, syscall3, write_str};
+use crate::{fail, fail_errno, nr, pass, syscall1, syscall2, syscall3, syscall4, write_str};
 
 // Error codes
 const EBADF: i64 = -9;
@@ -488,6 +488,171 @@ fn test_fcntl() {
     }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// LSEEK: Seek within an open file descriptor
+// ════════════════════════════════════════════════════════════════════════════
+
+const O_CREAT: u64 = 0o100;
+const O_RDWR: u64 = 2;
+const O_TRUNC: u64 = 0o1000;
+const AT_FDCWD: u64 = (-100i64) as u64;
+const SEEK_SET: u64 = 0;
+const SEEK_CUR: u64 = 1;
+const SEEK_END: u64 = 2;
+
+fn test_lseek() {
+    write_str("\n=== FD: lseek ===\n");
+
+    let path = b"/tmp/_posix_lseek_test\0";
+    let fd = unsafe {
+        syscall4(nr::OPENAT, AT_FDCWD, path.as_ptr() as u64,
+                 O_CREAT | O_RDWR | O_TRUNC, 0o600)
+    };
+    if fd < 0 {
+        fail_errno("lseek: create file", 0, fd);
+        return;
+    }
+
+    // Write 10 bytes
+    let data = b"0123456789";
+    unsafe { syscall3(nr::WRITE, fd as u64, data.as_ptr() as u64, 10) };
+
+    // SEEK_SET to beginning
+    let pos = unsafe { syscall3(nr::LSEEK, fd as u64, 0, SEEK_SET) };
+    if pos == 0 {
+        pass("lseek(SEEK_SET, 0) returns 0");
+    } else {
+        fail_errno("lseek(SEEK_SET, 0) returns 0", 0, pos);
+    }
+
+    // Read 3 bytes from position 0
+    let mut buf = [0u8; 3];
+    unsafe { syscall3(nr::READ, fd as u64, buf.as_mut_ptr() as u64, 3) };
+    if buf == *b"012" {
+        pass("read after SEEK_SET(0) returns correct data");
+    } else {
+        fail("read after SEEK_SET(0) returns correct data");
+    }
+
+    // SEEK_CUR should be at 3
+    let pos = unsafe { syscall3(nr::LSEEK, fd as u64, 0, SEEK_CUR) };
+    if pos == 3 {
+        pass("lseek(SEEK_CUR, 0) returns 3 after reading 3 bytes");
+    } else {
+        fail_errno("lseek(SEEK_CUR, 0) returns 3", 3, pos);
+    }
+
+    // SEEK_CUR +4
+    let pos = unsafe { syscall3(nr::LSEEK, fd as u64, 4, SEEK_CUR) };
+    if pos == 7 {
+        pass("lseek(SEEK_CUR, +4) returns 7");
+    } else {
+        fail_errno("lseek(SEEK_CUR, +4) returns 7", 7, pos);
+    }
+
+    // SEEK_END -2 → position 8
+    let pos = unsafe { syscall3(nr::LSEEK, fd as u64, (-2i64) as u64, SEEK_END) };
+    if pos == 8 {
+        pass("lseek(SEEK_END, -2) returns 8");
+    } else {
+        fail_errno("lseek(SEEK_END, -2) returns 8", 8, pos);
+    }
+
+    // Read 2 bytes from position 8 → "89"
+    let mut buf2 = [0u8; 2];
+    unsafe { syscall3(nr::READ, fd as u64, buf2.as_mut_ptr() as u64, 2) };
+    if buf2 == *b"89" {
+        pass("read after SEEK_END(-2) returns correct data");
+    } else {
+        fail("read after SEEK_END(-2) returns correct data");
+    }
+
+    // SEEK_SET on pipe → ESPIPE
+    let mut pipe_fds = [0i32; 2];
+    if unsafe { syscall2(nr::PIPE2, pipe_fds.as_mut_ptr() as u64, 0) } == 0 {
+        let ret = unsafe { syscall3(nr::LSEEK, pipe_fds[0] as u64, 0, SEEK_SET) };
+        if ret == -29 { // ESPIPE
+            pass("lseek on pipe returns ESPIPE");
+        } else {
+            fail_errno("lseek on pipe returns ESPIPE", -29, ret);
+        }
+        unsafe {
+            syscall1(nr::CLOSE, pipe_fds[0] as u64);
+            syscall1(nr::CLOSE, pipe_fds[1] as u64);
+        }
+    }
+
+    unsafe { syscall1(nr::CLOSE, fd as u64) };
+    unsafe { syscall3(nr::UNLINKAT, AT_FDCWD, path.as_ptr() as u64, 0) };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// FTRUNCATE: Truncate an open file to a specified length
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_ftruncate() {
+    write_str("\n=== FD: ftruncate ===\n");
+
+    let path = b"/tmp/_posix_ftrunc_test\0";
+    let fd = unsafe {
+        syscall4(nr::OPENAT, AT_FDCWD, path.as_ptr() as u64,
+                 O_CREAT | O_RDWR | O_TRUNC, 0o600)
+    };
+    if fd < 0 {
+        fail_errno("ftruncate: create file", 0, fd);
+        return;
+    }
+
+    // Write 20 bytes
+    let data = b"ABCDEFGHIJKLMNOPQRST";
+    unsafe { syscall3(nr::WRITE, fd as u64, data.as_ptr() as u64, 20) };
+
+    // Truncate to 5 bytes
+    let ret = unsafe { syscall2(nr::FTRUNCATE, fd as u64, 5) };
+    if ret == 0 {
+        pass("ftruncate(fd, 5) returns 0");
+    } else {
+        fail_errno("ftruncate(fd, 5) returns 0", 0, ret);
+    }
+
+    // Verify size via lseek(SEEK_END)
+    let size = unsafe { syscall3(nr::LSEEK, fd as u64, 0, SEEK_END) };
+    if size == 5 {
+        pass("file size is 5 after ftruncate");
+    } else {
+        fail_errno("file size is 5 after ftruncate", 5, size);
+    }
+
+    // Extend to 10 (should zero-fill)
+    let ret = unsafe { syscall2(nr::FTRUNCATE, fd as u64, 10) };
+    if ret == 0 {
+        pass("ftruncate(fd, 10) extends file");
+    } else {
+        fail_errno("ftruncate(fd, 10) extends file", 0, ret);
+    }
+
+    // Read from position 5 — should be zero bytes
+    unsafe { syscall3(nr::LSEEK, fd as u64, 5, SEEK_SET) };
+    let mut buf = [0xFFu8; 5];
+    unsafe { syscall3(nr::READ, fd as u64, buf.as_mut_ptr() as u64, 5) };
+    if buf == [0, 0, 0, 0, 0] {
+        pass("ftruncate extension zero-fills");
+    } else {
+        fail("ftruncate extension zero-fills");
+    }
+
+    // ftruncate on bad fd
+    let ret = unsafe { syscall2(nr::FTRUNCATE, 999, 0) };
+    if ret == -9 { // EBADF
+        pass("ftruncate(bad fd) returns EBADF");
+    } else {
+        fail_errno("ftruncate(bad fd) returns EBADF", -9, ret);
+    }
+
+    unsafe { syscall1(nr::CLOSE, fd as u64) };
+    unsafe { syscall3(nr::UNLINKAT, AT_FDCWD, path.as_ptr() as u64, 0) };
+}
+
 /// Run all fd tests
 pub fn run_all() {
     test_dup_positive();
@@ -497,4 +662,6 @@ pub fn run_all() {
     test_close();
     test_fstat();
     test_fcntl();
+    test_lseek();
+    test_ftruncate();
 }

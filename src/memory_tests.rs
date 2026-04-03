@@ -547,6 +547,58 @@ pub fn test_mmap_reuse() {
     }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// mlock / munlock — lock pages into memory
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_mlock() {
+    write_str("\n=== Memory: mlock/munlock ===\n");
+
+    // mmap a page
+    let addr = unsafe {
+        crate::syscall6(
+            nr::MMAP, 0, 4096,
+            PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
+            (-1i64) as u64, 0,
+        )
+    };
+    if addr < 0 {
+        fail_errno("mlock: mmap", 0, addr);
+        return;
+    }
+
+    // mlock
+    let ret = unsafe { crate::syscall2(nr::MLOCK, addr as u64, 4096) };
+    if ret == 0 {
+        pass("mlock returns 0");
+    } else if ret == -12 || ret == -1 { // ENOMEM or EPERM
+        pass("mlock denied (resource limit or no privilege)");
+    } else {
+        fail_errno("mlock returns 0 or expected error", 0, ret);
+    }
+
+    // munlock
+    let ret = unsafe { crate::syscall2(nr::MUNLOCK, addr as u64, 4096) };
+    if ret == 0 {
+        pass("munlock returns 0");
+    } else if ret == -1 { // EPERM
+        pass("munlock denied (no privilege)");
+    } else {
+        fail_errno("munlock returns 0", 0, ret);
+    }
+
+    // munlock on unmapped region → ENOMEM
+    unsafe { crate::syscall2(nr::MUNMAP, addr as u64, 4096) };
+    let ret = unsafe { crate::syscall2(nr::MUNLOCK, addr as u64, 4096) };
+    if ret == -12 { // ENOMEM
+        pass("munlock unmapped region returns ENOMEM");
+    } else if ret == 0 {
+        pass("munlock unmapped region accepted (implementation-defined)");
+    } else {
+        fail_errno("munlock unmapped region", -12, ret);
+    }
+}
+
 /// Run all memory management tests
 pub fn run_all() {
     test_mmap_positive();
@@ -555,4 +607,5 @@ pub fn run_all() {
     test_munmap_comprehensive();
     test_mprotect_comprehensive();
     test_mmap_reuse();
+    test_mlock();
 }
