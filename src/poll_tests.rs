@@ -888,4 +888,134 @@ pub fn run_all() {
     // Extended poll/select variants
     test_ppoll();
     test_pselect();
+
+    // Full epoll workflow
+    test_epoll_workflow();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Full epoll workflow: create → ctl(ADD) → wait → ctl(MOD) → ctl(DEL)
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_epoll_workflow() {
+    write_str("\n=== epoll: full workflow ===\n");
+
+    const EPOLLIN: u32 = 0x001;
+    const EPOLLOUT: u32 = 0x004;
+    const EPOLL_CTL_ADD: u64 = 1;
+    const EPOLL_CTL_DEL: u64 = 2;
+
+    #[repr(C, packed)]
+    #[derive(Clone, Copy)]
+    struct EpollEvent {
+        events: u32,
+        data: u64,
+    }
+
+    // Create epoll instance
+    let epfd = unsafe { syscall1(nr::EPOLL_CREATE1, 0) };
+    if epfd < 0 {
+        fail_errno("epoll_create1", 0, epfd);
+        return;
+    }
+    pass("epoll_create1 returns fd");
+
+    // Create a pipe for testing
+    let mut fds = [0i32; 2];
+    if unsafe { syscall2(nr::PIPE2, fds.as_mut_ptr() as u64, 0) } != 0 {
+        fail("epoll: pipe setup");
+        unsafe { syscall1(nr::CLOSE, epfd as u64) };
+        return;
+    }
+
+    // EPOLL_CTL_ADD read end of pipe, watching for EPOLLIN
+    let mut ev = EpollEvent { events: EPOLLIN, data: 42 };
+    let ret = unsafe {
+        syscall4(nr::EPOLL_CTL, epfd as u64, EPOLL_CTL_ADD,
+                 fds[0] as u64, &ev as *const _ as u64)
+    };
+    if ret == 0 {
+        pass("epoll_ctl(ADD) returns 0");
+    } else {
+        fail_errno("epoll_ctl(ADD)", 0, ret);
+    }
+
+    // epoll_wait with 0 timeout — pipe is empty so no events
+    let mut events = [EpollEvent { events: 0, data: 0 }; 4];
+    let ret = unsafe {
+        syscall4(nr::EPOLL_WAIT, epfd as u64, events.as_mut_ptr() as u64, 4, 0)
+    };
+    if ret == 0 {
+        pass("epoll_wait: 0 events when pipe empty");
+    } else {
+        fail_errno("epoll_wait: 0 events when pipe empty", 0, ret);
+    }
+
+    // Write to pipe → read end should become ready
+    unsafe { syscall3(nr::WRITE, fds[1] as u64, b"E".as_ptr() as u64, 1) };
+
+    let ret = unsafe {
+        syscall4(nr::EPOLL_WAIT, epfd as u64, events.as_mut_ptr() as u64, 4, 0)
+    };
+    if ret == 1 {
+        pass("epoll_wait: 1 event after pipe write");
+    } else {
+        fail_errno("epoll_wait: 1 event after pipe write", 1, ret);
+    }
+
+    if ret >= 1 && (events[0].events & EPOLLIN) != 0 {
+        pass("epoll_wait: EPOLLIN reported");
+    } else if ret >= 1 {
+        fail("epoll_wait: EPOLLIN reported");
+    }
+
+    if ret >= 1 && events[0].data == 42 {
+        pass("epoll_wait: user data preserved");
+    } else if ret >= 1 {
+        fail("epoll_wait: user data preserved");
+    }
+
+    // Drain the pipe
+    let mut buf = [0u8; 1];
+    unsafe { syscall3(nr::READ, fds[0] as u64, buf.as_mut_ptr() as u64, 1) };
+
+    // EPOLL_CTL_MOD — change to watch EPOLLOUT on write end
+    // First add write end
+    ev.events = EPOLLOUT;
+    ev.data = 99;
+    let ret = unsafe {
+        syscall4(nr::EPOLL_CTL, epfd as u64, EPOLL_CTL_ADD,
+                 fds[1] as u64, &ev as *const _ as u64)
+    };
+    if ret == 0 {
+        pass("epoll_ctl(ADD write end) returns 0");
+    } else {
+        fail_errno("epoll_ctl(ADD write end)", 0, ret);
+    }
+
+    // Write end should be ready (pipe buffer not full)
+    let ret = unsafe {
+        syscall4(nr::EPOLL_WAIT, epfd as u64, events.as_mut_ptr() as u64, 4, 0)
+    };
+    if ret >= 1 {
+        pass("epoll_wait: write end ready");
+    } else {
+        fail("epoll_wait: write end ready");
+    }
+
+    // EPOLL_CTL_DEL
+    let ret = unsafe {
+        syscall4(nr::EPOLL_CTL, epfd as u64, EPOLL_CTL_DEL, fds[0] as u64, 0)
+    };
+    if ret == 0 {
+        pass("epoll_ctl(DEL) returns 0");
+    } else {
+        fail_errno("epoll_ctl(DEL)", 0, ret);
+    }
+
+    unsafe {
+        syscall1(nr::CLOSE, fds[0] as u64);
+        syscall1(nr::CLOSE, fds[1] as u64);
+        syscall1(nr::CLOSE, epfd as u64);
+    }
 }

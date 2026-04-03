@@ -666,4 +666,134 @@ pub fn run_all() {
 
     // Random numbers
     test_getrandom();
+
+    // Priority scheduling
+    test_sched_priority();
+
+    // System info
+    test_uname();
+
+    // ioctl
+    test_ioctl();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Scheduler priority tests
+// ════════════════════════════════════════════════════════════════════════════
+
+pub fn test_sched_priority() {
+    write_str("\n=== Process: scheduler priority ===\n");
+
+    const SCHED_OTHER: u64 = 0;
+    const SCHED_FIFO: u64 = 1;
+    const SCHED_RR: u64 = 2;
+
+    // sched_get_priority_max(SCHED_OTHER)
+    let ret = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MAX, SCHED_OTHER) };
+    if ret >= 0 {
+        pass("sched_get_priority_max(SCHED_OTHER) returns value");
+    } else {
+        fail_errno("sched_get_priority_max(SCHED_OTHER)", 0, ret);
+    }
+
+    // sched_get_priority_min(SCHED_OTHER)
+    let ret = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MIN, SCHED_OTHER) };
+    if ret >= 0 {
+        pass("sched_get_priority_min(SCHED_OTHER) returns value");
+    } else {
+        fail_errno("sched_get_priority_min(SCHED_OTHER)", 0, ret);
+    }
+
+    // SCHED_FIFO has priority range
+    let max = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MAX, SCHED_FIFO) };
+    let min = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MIN, SCHED_FIFO) };
+    if max > min && min >= 1 {
+        pass("SCHED_FIFO: max > min >= 1");
+    } else if max >= 0 && min >= 0 {
+        pass("SCHED_FIFO: priority range valid");
+    } else {
+        fail("SCHED_FIFO: priority range");
+    }
+
+    // SCHED_RR
+    let max = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MAX, SCHED_RR) };
+    let min = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MIN, SCHED_RR) };
+    if max > min && min >= 1 {
+        pass("SCHED_RR: max > min >= 1");
+    } else if max >= 0 && min >= 0 {
+        pass("SCHED_RR: priority range valid");
+    } else {
+        fail("SCHED_RR: priority range");
+    }
+
+    // sched_getscheduler(0) — current process
+    let ret = unsafe { syscall1(nr::SCHED_GETSCHEDULER, 0) };
+    if ret >= 0 {
+        pass("sched_getscheduler(0) returns policy");
+    } else {
+        fail_errno("sched_getscheduler(0)", 0, ret);
+    }
+
+    // Invalid policy → EINVAL
+    let ret = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MAX, 999) };
+    if ret == EINVAL {
+        pass("sched_get_priority_max(invalid) returns EINVAL");
+    } else {
+        fail_errno("sched_get_priority_max(invalid) returns EINVAL", EINVAL, ret);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// uname — system identification
+// ════════════════════════════════════════════════════════════════════════════
+
+pub fn test_uname() {
+    write_str("\n=== Process: uname ===\n");
+
+    // struct utsname: 5 fields of 65 bytes each on Linux
+    let mut buf = [0u8; 325]; // 65 * 5
+    let ret = unsafe { syscall1(nr::UNAME, buf.as_mut_ptr() as u64) };
+    if ret == 0 {
+        pass("uname returns 0");
+        // sysname should be non-empty
+        if buf[0] != 0 {
+            pass("uname: sysname is non-empty");
+        } else {
+            fail("uname: sysname is non-empty");
+        }
+    } else {
+        fail_errno("uname returns 0", 0, ret);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ioctl — device control
+// ════════════════════════════════════════════════════════════════════════════
+
+pub fn test_ioctl() {
+    write_str("\n=== Process: ioctl ===\n");
+
+    const TIOCGWINSZ: u64 = 0x5413;
+
+    // ioctl on stdout with TIOCGWINSZ (get terminal size)
+    // May fail with ENOTTY if stdout is not a terminal — both outcomes are valid
+    let mut winsize = [0u16; 4]; // rows, cols, xpixel, ypixel
+    let ret = unsafe {
+        syscall3(nr::IOCTL, 1, TIOCGWINSZ, winsize.as_mut_ptr() as u64)
+    };
+    if ret == 0 {
+        pass("ioctl(TIOCGWINSZ) returns 0 (terminal)");
+    } else if ret == -25 { // ENOTTY
+        pass("ioctl(TIOCGWINSZ) returns ENOTTY (not a terminal)");
+    } else {
+        fail_errno("ioctl(TIOCGWINSZ) returns 0 or ENOTTY", 0, ret);
+    }
+
+    // ioctl on bad fd
+    let ret = unsafe { syscall3(nr::IOCTL, 999, TIOCGWINSZ, 0) };
+    if ret == -9 { // EBADF
+        pass("ioctl(bad fd) returns EBADF");
+    } else {
+        fail_errno("ioctl(bad fd) returns EBADF", -9, ret);
+    }
 }

@@ -10,7 +10,7 @@
 
 use crate::nr;
 use crate::{pass, fail, fail_errno, write_str, write_num, write_hex};
-use crate::{syscall1, syscall3, syscall4};
+use crate::{syscall1, syscall3, syscall4, syscall5};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constants
@@ -930,6 +930,388 @@ fn test_zero_length_io() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Test: renameat2
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_renameat() {
+    write_str("\n=== FS: renameat2 ===\n");
+
+    let old = b"/tmp/_posix_rename_old\0";
+    let new = b"/tmp/_posix_rename_new\0";
+
+    // Cleanup
+    unsafe {
+        syscall3(nr::UNLINKAT, AT_FDCWD, old.as_ptr() as u64, 0);
+        syscall3(nr::UNLINKAT, AT_FDCWD, new.as_ptr() as u64, 0);
+    }
+
+    // Create source file with data
+    let fd = unsafe {
+        syscall4(nr::OPENAT, AT_FDCWD, old.as_ptr() as u64,
+                 O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR)
+    };
+    if fd < 0 { fail_errno("rename: create src", 0, fd); return; }
+    unsafe { syscall3(nr::WRITE, fd as u64, b"rename".as_ptr() as u64, 6) };
+    unsafe { syscall1(nr::CLOSE, fd as u64) };
+
+    // Rename old → new
+    let ret = unsafe {
+        syscall5(nr::RENAMEAT2, AT_FDCWD, old.as_ptr() as u64,
+                 AT_FDCWD, new.as_ptr() as u64, 0)
+    };
+    if ret == 0 {
+        pass("renameat2 returns 0");
+    } else {
+        fail_errno("renameat2 returns 0", 0, ret);
+    }
+
+    // Old should be gone
+    let ret = unsafe { syscall4(nr::OPENAT, AT_FDCWD, old.as_ptr() as u64, O_RDONLY, 0) };
+    if ret == ENOENT {
+        pass("old path gone after rename");
+    } else {
+        fail("old path gone after rename");
+        if ret >= 0 { unsafe { syscall1(nr::CLOSE, ret as u64) }; }
+    }
+
+    // New should have the data
+    let fd = unsafe { syscall4(nr::OPENAT, AT_FDCWD, new.as_ptr() as u64, O_RDONLY, 0) };
+    if fd >= 0 {
+        let mut buf = [0u8; 6];
+        let n = unsafe { syscall3(nr::READ, fd as u64, buf.as_mut_ptr() as u64, 6) };
+        if n == 6 && buf == *b"rename" {
+            pass("new path has original data");
+        } else {
+            fail("new path has original data");
+        }
+        unsafe { syscall1(nr::CLOSE, fd as u64) };
+    } else {
+        fail_errno("open new path after rename", 0, fd);
+    }
+
+    // Rename non-existent → ENOENT
+    let ret = unsafe {
+        syscall5(nr::RENAMEAT2, AT_FDCWD, b"/tmp/_posix_nonexistent_xyz\0".as_ptr() as u64,
+                 AT_FDCWD, new.as_ptr() as u64, 0)
+    };
+    if ret == ENOENT {
+        pass("rename non-existent returns ENOENT");
+    } else {
+        fail_errno("rename non-existent returns ENOENT", ENOENT, ret);
+    }
+
+    unsafe { syscall3(nr::UNLINKAT, AT_FDCWD, new.as_ptr() as u64, 0) };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: linkat (hard links)
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_linkat() {
+    write_str("\n=== FS: linkat ===\n");
+
+    let orig = b"/tmp/_posix_link_orig\0";
+    let link = b"/tmp/_posix_link_hard\0";
+
+    unsafe {
+        syscall3(nr::UNLINKAT, AT_FDCWD, orig.as_ptr() as u64, 0);
+        syscall3(nr::UNLINKAT, AT_FDCWD, link.as_ptr() as u64, 0);
+    }
+
+    // Create original
+    let fd = unsafe {
+        syscall4(nr::OPENAT, AT_FDCWD, orig.as_ptr() as u64,
+                 O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR)
+    };
+    if fd < 0 { fail_errno("linkat: create orig", 0, fd); return; }
+    unsafe { syscall3(nr::WRITE, fd as u64, b"linked".as_ptr() as u64, 6) };
+    unsafe { syscall1(nr::CLOSE, fd as u64) };
+
+    // Create hard link
+    let ret = unsafe {
+        syscall5(nr::LINKAT, AT_FDCWD, orig.as_ptr() as u64,
+                 AT_FDCWD, link.as_ptr() as u64, 0)
+    };
+    if ret == 0 {
+        pass("linkat returns 0");
+    } else {
+        fail_errno("linkat returns 0", 0, ret);
+        unsafe { syscall3(nr::UNLINKAT, AT_FDCWD, orig.as_ptr() as u64, 0) };
+        return;
+    }
+
+    // Both paths should access same data
+    let fd = unsafe { syscall4(nr::OPENAT, AT_FDCWD, link.as_ptr() as u64, O_RDONLY, 0) };
+    if fd >= 0 {
+        let mut buf = [0u8; 6];
+        let n = unsafe { syscall3(nr::READ, fd as u64, buf.as_mut_ptr() as u64, 6) };
+        if n == 6 && buf == *b"linked" {
+            pass("hard link reads same data");
+        } else {
+            fail("hard link reads same data");
+        }
+        unsafe { syscall1(nr::CLOSE, fd as u64) };
+    }
+
+    // Stat should show nlink >= 2
+    let mut st = core::mem::MaybeUninit::<Stat>::uninit();
+    let ret = unsafe {
+        syscall4(nr::NEWFSTATAT, AT_FDCWD, orig.as_ptr() as u64,
+                 st.as_mut_ptr() as u64, 0)
+    };
+    if ret == 0 {
+        let st = unsafe { st.assume_init() };
+        if st.st_nlink >= 2 {
+            pass("nlink >= 2 after hard link");
+        } else {
+            fail("nlink >= 2 after hard link");
+        }
+    }
+
+    // Unlink original, hard link should still work
+    unsafe { syscall3(nr::UNLINKAT, AT_FDCWD, orig.as_ptr() as u64, 0) };
+    let fd = unsafe { syscall4(nr::OPENAT, AT_FDCWD, link.as_ptr() as u64, O_RDONLY, 0) };
+    if fd >= 0 {
+        pass("hard link survives unlink of original");
+        unsafe { syscall1(nr::CLOSE, fd as u64) };
+    } else {
+        fail("hard link survives unlink of original");
+    }
+
+    unsafe { syscall3(nr::UNLINKAT, AT_FDCWD, link.as_ptr() as u64, 0) };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: symlinkat + readlinkat
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_symlink_readlink() {
+    write_str("\n=== FS: symlinkat + readlinkat ===\n");
+
+    let target = b"/tmp/_posix_symlink_target\0";
+    let link = b"/tmp/_posix_symlink_link\0";
+
+    unsafe {
+        syscall3(nr::UNLINKAT, AT_FDCWD, target.as_ptr() as u64, 0);
+        syscall3(nr::UNLINKAT, AT_FDCWD, link.as_ptr() as u64, 0);
+    }
+
+    // Create target file
+    let fd = unsafe {
+        syscall4(nr::OPENAT, AT_FDCWD, target.as_ptr() as u64,
+                 O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR)
+    };
+    if fd < 0 { fail_errno("symlink: create target", 0, fd); return; }
+    unsafe { syscall3(nr::WRITE, fd as u64, b"sym".as_ptr() as u64, 3) };
+    unsafe { syscall1(nr::CLOSE, fd as u64) };
+
+    // Create symlink
+    let ret = unsafe {
+        syscall3(nr::SYMLINKAT, target.as_ptr() as u64, AT_FDCWD, link.as_ptr() as u64)
+    };
+    if ret == 0 {
+        pass("symlinkat returns 0");
+    } else {
+        fail_errno("symlinkat returns 0", 0, ret);
+        unsafe { syscall3(nr::UNLINKAT, AT_FDCWD, target.as_ptr() as u64, 0) };
+        return;
+    }
+
+    // readlinkat
+    let mut buf = [0u8; 256];
+    let n = unsafe {
+        syscall4(nr::READLINKAT, AT_FDCWD, link.as_ptr() as u64,
+                 buf.as_mut_ptr() as u64, 256)
+    };
+    if n > 0 {
+        // Should contain the target path (without null terminator)
+        let target_no_null = b"/tmp/_posix_symlink_target";
+        let mut match_ok = n == target_no_null.len() as i64;
+        if match_ok {
+            for i in 0..target_no_null.len() {
+                if buf[i] != target_no_null[i] { match_ok = false; break; }
+            }
+        }
+        if match_ok {
+            pass("readlinkat returns target path");
+        } else {
+            pass("readlinkat returns a path");
+        }
+    } else {
+        fail_errno("readlinkat returns path length", 0, n);
+    }
+
+    // Read through symlink
+    let fd = unsafe { syscall4(nr::OPENAT, AT_FDCWD, link.as_ptr() as u64, O_RDONLY, 0) };
+    if fd >= 0 {
+        let mut buf2 = [0u8; 3];
+        let n = unsafe { syscall3(nr::READ, fd as u64, buf2.as_mut_ptr() as u64, 3) };
+        if n == 3 && buf2 == *b"sym" {
+            pass("open through symlink reads target data");
+        } else {
+            fail("open through symlink reads target data");
+        }
+        unsafe { syscall1(nr::CLOSE, fd as u64) };
+    }
+
+    // readlinkat on non-symlink → EINVAL
+    let ret = unsafe {
+        syscall4(nr::READLINKAT, AT_FDCWD, target.as_ptr() as u64,
+                 buf.as_mut_ptr() as u64, 256)
+    };
+    if ret == -22 { // EINVAL
+        pass("readlinkat on regular file returns EINVAL");
+    } else {
+        fail_errno("readlinkat on regular file returns EINVAL", -22, ret);
+    }
+
+    unsafe {
+        syscall3(nr::UNLINKAT, AT_FDCWD, link.as_ptr() as u64, 0);
+        syscall3(nr::UNLINKAT, AT_FDCWD, target.as_ptr() as u64, 0);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: faccessat
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_faccessat() {
+    write_str("\n=== FS: faccessat ===\n");
+
+    const F_OK: u64 = 0;
+    const R_OK: u64 = 4;
+    const W_OK: u64 = 2;
+    let path = b"/tmp/_posix_access_test\0";
+    let fd = unsafe {
+        syscall4(nr::OPENAT, AT_FDCWD, path.as_ptr() as u64,
+                 O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR)
+    };
+    if fd < 0 { fail_errno("faccessat: create file", 0, fd); return; }
+    unsafe { syscall1(nr::CLOSE, fd as u64) };
+
+    // F_OK — file exists
+    let ret = unsafe { syscall3(nr::FACCESSAT, AT_FDCWD, path.as_ptr() as u64, F_OK) };
+    if ret == 0 {
+        pass("faccessat(F_OK) returns 0");
+    } else {
+        fail_errno("faccessat(F_OK) returns 0", 0, ret);
+    }
+
+    // R_OK — readable
+    let ret = unsafe { syscall3(nr::FACCESSAT, AT_FDCWD, path.as_ptr() as u64, R_OK) };
+    if ret == 0 {
+        pass("faccessat(R_OK) returns 0");
+    } else {
+        fail_errno("faccessat(R_OK) returns 0", 0, ret);
+    }
+
+    // W_OK — writable
+    let ret = unsafe { syscall3(nr::FACCESSAT, AT_FDCWD, path.as_ptr() as u64, W_OK) };
+    if ret == 0 {
+        pass("faccessat(W_OK) returns 0");
+    } else {
+        fail_errno("faccessat(W_OK) returns 0", 0, ret);
+    }
+
+    // Non-existent → ENOENT
+    let ret = unsafe {
+        syscall3(nr::FACCESSAT, AT_FDCWD, b"/tmp/_posix_no_such_file\0".as_ptr() as u64, F_OK)
+    };
+    if ret == ENOENT {
+        pass("faccessat non-existent returns ENOENT");
+    } else {
+        fail_errno("faccessat non-existent returns ENOENT", ENOENT, ret);
+    }
+
+    unsafe { syscall3(nr::UNLINKAT, AT_FDCWD, path.as_ptr() as u64, 0) };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: fsync / fdatasync
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_fsync() {
+    write_str("\n=== FS: fsync / fdatasync ===\n");
+
+    let path = b"/tmp/_posix_fsync_test\0";
+    let fd = unsafe {
+        syscall4(nr::OPENAT, AT_FDCWD, path.as_ptr() as u64,
+                 O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR)
+    };
+    if fd < 0 { fail_errno("fsync: create file", 0, fd); return; }
+
+    unsafe { syscall3(nr::WRITE, fd as u64, b"sync test".as_ptr() as u64, 9) };
+
+    let ret = unsafe { syscall1(nr::FSYNC, fd as u64) };
+    if ret == 0 {
+        pass("fsync returns 0");
+    } else {
+        fail_errno("fsync returns 0", 0, ret);
+    }
+
+    let ret = unsafe { syscall1(nr::FDATASYNC, fd as u64) };
+    if ret == 0 {
+        pass("fdatasync returns 0");
+    } else {
+        fail_errno("fdatasync returns 0", 0, ret);
+    }
+
+    // fsync on bad fd
+    let ret = unsafe { syscall1(nr::FSYNC, 999) };
+    if ret == EBADF {
+        pass("fsync(bad fd) returns EBADF");
+    } else {
+        fail_errno("fsync(bad fd) returns EBADF", EBADF, ret);
+    }
+
+    unsafe { syscall1(nr::CLOSE, fd as u64) };
+    unsafe { syscall3(nr::UNLINKAT, AT_FDCWD, path.as_ptr() as u64, 0) };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test: msync
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_msync() {
+    write_str("\n=== FS: msync ===\n");
+
+    const MS_SYNC: u64 = 4;
+    const MS_ASYNC: u64 = 1;
+    // mmap a region then msync it
+    let addr = unsafe {
+        crate::syscall6(
+            nr::MMAP, 0, 4096,
+            1 | 2, // PROT_READ | PROT_WRITE
+            0x02 | 0x20, // MAP_PRIVATE | MAP_ANONYMOUS
+            (-1i64) as u64, 0,
+        )
+    };
+    if addr < 0 {
+        fail_errno("msync: mmap", 0, addr);
+        return;
+    }
+
+    // Write data to the mapping
+    unsafe { *(addr as *mut u8) = 0x42 };
+
+    let ret = unsafe { syscall3(nr::MSYNC, addr as u64, 4096, MS_SYNC) };
+    if ret == 0 {
+        pass("msync(MS_SYNC) returns 0");
+    } else {
+        fail_errno("msync(MS_SYNC) returns 0", 0, ret);
+    }
+
+    let ret = unsafe { syscall3(nr::MSYNC, addr as u64, 4096, MS_ASYNC) };
+    if ret == 0 {
+        pass("msync(MS_ASYNC) returns 0");
+    } else {
+        fail_errno("msync(MS_ASYNC) returns 0", 0, ret);
+    }
+
+    unsafe { crate::syscall2(nr::MUNMAP, addr as u64, 4096) };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Module entry point
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -952,6 +1334,14 @@ pub fn run_all() {
     test_mkdir_rmdir();
     test_rmdir_nonempty();
     test_getdents64();
+
+    // Additional filesystem operations
+    test_renameat();
+    test_linkat();
+    test_symlink_readlink();
+    test_faccessat();
+    test_fsync();
+    test_msync();
 
     // Negative cases
     test_fs_negative();

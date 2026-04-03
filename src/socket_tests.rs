@@ -6,7 +6,7 @@
 //! - bind/listen/accept (where possible without network)
 //! - shutdown
 
-use crate::{fail, fail_errno, nr, pass, syscall1, syscall2, syscall3, syscall5, syscall6, write_str};
+use crate::{fail, fail_errno, nr, pass, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6, write_str};
 
 // Error codes
 const EPERM: i64 = -1;
@@ -1046,6 +1046,165 @@ fn test_unix_data_flow() {
     }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// SOCKETPAIR: Create connected socket pair
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_socketpair() {
+    write_str("\n=== socketpair: tests ===\n");
+
+    let mut sv = [0i32; 2];
+    let ret = unsafe {
+        syscall4(nr::SOCKETPAIR, AF_UNIX, SOCK_STREAM, 0, sv.as_mut_ptr() as u64)
+    };
+    if ret < 0 {
+        if ret == -97 { // EAFNOSUPPORT
+            pass("AF_UNIX socketpair not supported (skipping)");
+            return;
+        }
+        fail_errno("socketpair(AF_UNIX, STREAM)", 0, ret);
+        return;
+    }
+    pass("socketpair returns 0");
+
+    if sv[0] >= 0 && sv[1] >= 0 && sv[0] != sv[1] {
+        pass("socketpair: two distinct fds");
+    } else {
+        fail("socketpair: two distinct fds");
+    }
+
+    // Write on sv[0], read on sv[1]
+    let msg = b"socketpair data";
+    let nsent = unsafe {
+        syscall3(crate::nr::WRITE, sv[0] as u64, msg.as_ptr() as u64, msg.len() as u64)
+    };
+    let mut buf = [0u8; 32];
+    let nrecv = unsafe {
+        syscall3(crate::nr::READ, sv[1] as u64, buf.as_mut_ptr() as u64, 32)
+    };
+    if nsent == msg.len() as i64 && nrecv == msg.len() as i64 {
+        let mut ok = true;
+        for i in 0..msg.len() { if buf[i] != msg[i] { ok = false; break; } }
+        if ok {
+            pass("socketpair: bidirectional data flow");
+        } else {
+            fail("socketpair: bidirectional data flow");
+        }
+    } else {
+        fail("socketpair: send/recv counts");
+    }
+
+    // SOCK_DGRAM pair
+    let mut sv2 = [0i32; 2];
+    let ret = unsafe {
+        syscall4(nr::SOCKETPAIR, AF_UNIX, SOCK_DGRAM, 0, sv2.as_mut_ptr() as u64)
+    };
+    if ret == 0 {
+        pass("socketpair(SOCK_DGRAM) returns 0");
+        unsafe {
+            syscall1(nr::CLOSE, sv2[0] as u64);
+            syscall1(nr::CLOSE, sv2[1] as u64);
+        }
+    } else {
+        fail_errno("socketpair(SOCK_DGRAM)", 0, ret);
+    }
+
+    unsafe {
+        syscall1(nr::CLOSE, sv[0] as u64);
+        syscall1(nr::CLOSE, sv[1] as u64);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SENDMSG / RECVMSG: Scatter-gather I/O
+// ════════════════════════════════════════════════════════════════════════════
+
+fn test_sendmsg_recvmsg() {
+    write_str("\n=== sendmsg/recvmsg: scatter-gather ===\n");
+
+    let mut sv = [0i32; 2];
+    let ret = unsafe {
+        syscall4(nr::SOCKETPAIR, AF_UNIX, SOCK_STREAM, 0, sv.as_mut_ptr() as u64)
+    };
+    if ret < 0 {
+        pass("AF_UNIX not supported, skipping sendmsg/recvmsg");
+        return;
+    }
+
+    // sendmsg with 2-segment iovec
+    let seg1 = b"Hello";
+    let seg2 = b"World";
+    let iov = [
+        crate::Iovec { iov_base: seg1.as_ptr() as u64, iov_len: 5 },
+        crate::Iovec { iov_base: seg2.as_ptr() as u64, iov_len: 5 },
+    ];
+
+    #[repr(C)]
+    struct Msghdr {
+        msg_name: u64,
+        msg_namelen: u32,
+        _pad0: u32,
+        msg_iov: u64,
+        msg_iovlen: u64,
+        msg_control: u64,
+        msg_controllen: u64,
+        msg_flags: i32,
+        _pad1: i32,
+    }
+
+    let hdr = Msghdr {
+        msg_name: 0,
+        msg_namelen: 0,
+        _pad0: 0,
+        msg_iov: iov.as_ptr() as u64,
+        msg_iovlen: 2,
+        msg_control: 0,
+        msg_controllen: 0,
+        msg_flags: 0,
+        _pad1: 0,
+    };
+
+    let nsent = unsafe {
+        syscall3(nr::SENDMSG, sv[0] as u64, &hdr as *const _ as u64, 0)
+    };
+    if nsent == 10 {
+        pass("sendmsg: 2-segment iovec sent 10 bytes");
+    } else {
+        fail_errno("sendmsg: 2-segment iovec", 10, nsent);
+    }
+
+    // recvmsg into single buffer
+    let mut recv_buf = [0u8; 16];
+    let recv_iov = [crate::Iovec {
+        iov_base: recv_buf.as_mut_ptr() as u64,
+        iov_len: 16,
+    }];
+    let mut recv_hdr = Msghdr {
+        msg_name: 0,
+        msg_namelen: 0,
+        _pad0: 0,
+        msg_iov: recv_iov.as_ptr() as u64,
+        msg_iovlen: 1,
+        msg_control: 0,
+        msg_controllen: 0,
+        msg_flags: 0,
+        _pad1: 0,
+    };
+    let nrecv = unsafe {
+        syscall3(nr::RECVMSG, sv[1] as u64, &mut recv_hdr as *mut _ as u64, 0)
+    };
+    if nrecv == 10 && recv_buf[..10] == *b"HelloWorld" {
+        pass("recvmsg: received scatter-gathered data");
+    } else {
+        fail("recvmsg: received scatter-gathered data");
+    }
+
+    unsafe {
+        syscall1(nr::CLOSE, sv[0] as u64);
+        syscall1(nr::CLOSE, sv[1] as u64);
+    }
+}
+
 /// Run all socket tests
 pub fn run_all() {
     test_socket_positive();
@@ -1060,4 +1219,6 @@ pub fn run_all() {
     test_tcp_data_flow();
     test_udp_data_flow();
     test_unix_data_flow();
+    test_socketpair();
+    test_sendmsg_recvmsg();
 }

@@ -892,6 +892,106 @@ pub fn test_signal_multiple_delivery() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// sigpending — query pending signal set
+// ════════════════════════════════════════════════════════════════════════════
+
+pub fn test_sigpending() {
+    write_str("\n=== Signal: sigpending ===\n");
+
+    // Block SIGUSR1, send it, verify it appears in pending set
+    let block_mask: u64 = 1 << SIGUSR1;
+    let mut saved = [0u64; 2];
+    unsafe {
+        syscall4(nr::SIGPROCMASK, SIG_BLOCK, &block_mask as *const _ as u64,
+                 saved.as_mut_ptr() as u64, 8)
+    };
+
+    // Install handler so delivery doesn't kill us on unblock
+    let mut sa = Sigaction {
+        sa_handler: test_sig_handler as *const () as u64,
+        sa_flags: SA_RESTORER,
+        sa_restorer: sig_restorer as *const () as u64,
+        sa_mask: [0, 0],
+    };
+    unsafe { syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8) };
+
+    let pid = unsafe { syscall0(nr::GETPID) };
+    unsafe { syscall2(nr::KILL, pid as u64, SIGUSR1) };
+
+    // Query pending signals
+    let mut pending = [0u64; 2];
+    let ret = unsafe {
+        syscall2(nr::SIGPENDING, pending.as_mut_ptr() as u64, 8)
+    };
+    if ret == 0 {
+        pass("sigpending returns 0");
+    } else {
+        fail_errno("sigpending returns 0", 0, ret);
+    }
+
+    if (pending[0] & (1 << SIGUSR1)) != 0 {
+        pass("SIGUSR1 appears in pending set");
+    } else {
+        fail("SIGUSR1 appears in pending set");
+    }
+
+    // Unblock to clear the pending signal
+    unsafe { syscall4(nr::SIGPROCMASK, SIG_SETMASK, saved.as_ptr() as u64, 0, 8) };
+
+    // Restore default
+    sa.sa_handler = 0; sa.sa_flags = 0; sa.sa_restorer = 0;
+    unsafe { syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8) };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// rt_sigtimedwait — synchronous signal wait
+// ════════════════════════════════════════════════════════════════════════════
+
+pub fn test_sigtimedwait() {
+    write_str("\n=== Signal: rt_sigtimedwait ===\n");
+
+    // Block SIGUSR1, send it, then sigtimedwait to consume it
+    let block_mask: u64 = 1 << SIGUSR1;
+    let mut saved = [0u64; 2];
+    unsafe {
+        syscall4(nr::SIGPROCMASK, SIG_BLOCK, &block_mask as *const _ as u64,
+                 saved.as_mut_ptr() as u64, 8)
+    };
+
+    let pid = unsafe { syscall0(nr::GETPID) };
+    unsafe { syscall2(nr::KILL, pid as u64, SIGUSR1) };
+
+    // sigtimedwait with zero timeout (immediate)
+    let ts = crate::Timespec { tv_sec: 0, tv_nsec: 0 };
+    let ret = unsafe {
+        syscall4(nr::SIGTIMEDWAIT, &block_mask as *const _ as u64, 0,
+                 &ts as *const _ as u64, 8)
+    };
+    if ret == SIGUSR1 as i64 {
+        pass("rt_sigtimedwait returns SIGUSR1");
+    } else if ret > 0 {
+        pass("rt_sigtimedwait returned a signal");
+    } else {
+        fail_errno("rt_sigtimedwait returns signal", SIGUSR1 as i64, ret);
+    }
+
+    // Timeout with no pending signal → EAGAIN
+    let ts2 = crate::Timespec { tv_sec: 0, tv_nsec: 1_000_000 }; // 1ms
+    let ret = unsafe {
+        syscall4(nr::SIGTIMEDWAIT, &block_mask as *const _ as u64, 0,
+                 &ts2 as *const _ as u64, 8)
+    };
+    if ret == -11 { // EAGAIN
+        pass("rt_sigtimedwait with no pending signal returns EAGAIN");
+    } else {
+        fail_errno("rt_sigtimedwait timeout returns EAGAIN", -11, ret);
+    }
+
+    // Restore mask
+    unsafe { syscall4(nr::SIGPROCMASK, SIG_SETMASK, saved.as_ptr() as u64, 0, 8) };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Module entry point
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -922,4 +1022,8 @@ pub fn run_all() {
     test_signal_blocked_pending();
     test_signal_delivery_sigalrm();
     test_signal_multiple_delivery();
+
+    // Realtime signal extensions
+    test_sigpending();
+    test_sigtimedwait();
 }
