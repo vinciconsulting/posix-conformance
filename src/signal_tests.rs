@@ -90,7 +90,7 @@ pub fn test_sigprocmask_positive() {
     }
 
     // 2. SIG_BLOCK - add SIGUSR1 to blocked set
-    let newset: u64 = 1 << SIGUSR1;
+    let newset: u64 = 1 << (SIGUSR1 - 1);
     let mut saved = [0u64; 2];
     let ret = unsafe {
         syscall4(nr::SIGPROCMASK, SIG_BLOCK, &newset as *const _ as u64,
@@ -105,7 +105,7 @@ pub fn test_sigprocmask_positive() {
     // 3. Verify SIGUSR1 is blocked
     let mut current = [0u64; 2];
     let ret = unsafe { syscall4(nr::SIGPROCMASK, 0, 0, current.as_mut_ptr() as u64, 8) };
-    if ret == 0 && (current[0] & (1 << SIGUSR1)) != 0 {
+    if ret == 0 && (current[0] & (1 << (SIGUSR1 - 1))) != 0 {
         pass("sigprocmask: SIGUSR1 verified blocked");
     } else {
         fail("sigprocmask: SIGUSR1 verified blocked");
@@ -124,14 +124,14 @@ pub fn test_sigprocmask_positive() {
     // 5. Verify SIGUSR1 is unblocked
     let mut current = [0u64; 2];
     let ret = unsafe { syscall4(nr::SIGPROCMASK, 0, 0, current.as_mut_ptr() as u64, 8) };
-    if ret == 0 && (current[0] & (1 << SIGUSR1)) == 0 {
+    if ret == 0 && (current[0] & (1 << (SIGUSR1 - 1))) == 0 {
         pass("sigprocmask: SIGUSR1 verified unblocked");
     } else {
         fail("sigprocmask: SIGUSR1 verified unblocked");
     }
 
     // 6. SIG_SETMASK - set entire mask
-    let fullset: u64 = (1 << SIGUSR1) | (1 << SIGUSR2) | (1 << SIGALRM);
+    let fullset: u64 = (1 << (SIGUSR1 - 1)) | (1 << (SIGUSR2 - 1)) | (1 << (SIGALRM - 1));
     let ret = unsafe {
         syscall4(nr::SIGPROCMASK, SIG_SETMASK, &fullset as *const _ as u64, 0, 8)
     };
@@ -144,7 +144,7 @@ pub fn test_sigprocmask_positive() {
     // 7. Verify multiple signals blocked
     let mut current = [0u64; 2];
     let ret = unsafe { syscall4(nr::SIGPROCMASK, 0, 0, current.as_mut_ptr() as u64, 8) };
-    let expected = (1 << SIGUSR1) | (1 << SIGUSR2) | (1 << SIGALRM);
+    let expected = (1 << (SIGUSR1 - 1)) | (1 << (SIGUSR2 - 1)) | (1 << (SIGALRM - 1));
     if ret == 0 && (current[0] & expected) == expected {
         pass("sigprocmask: multiple signals verified blocked");
     } else {
@@ -162,7 +162,7 @@ pub fn test_sigprocmask_positive() {
     }
 
     // 9. Block all blockable signals (except SIGKILL, SIGSTOP)
-    let all_mask: u64 = !((1 << SIGKILL) | (1 << SIGSTOP));
+    let all_mask: u64 = !((1 << (SIGKILL - 1)) | (1 << (SIGSTOP - 1)));
     let ret = unsafe {
         syscall4(nr::SIGPROCMASK, SIG_SETMASK, &all_mask as *const _ as u64,
                  saved.as_mut_ptr() as u64, 8)
@@ -182,7 +182,7 @@ pub fn test_sigprocmask_negative() {
     write_str("\n=== Signals: sigprocmask negative ===\n");
 
     // 1. Invalid "how" value
-    let newset: u64 = 1 << SIGUSR1;
+    let newset: u64 = 1 << (SIGUSR1 - 1);
     let ret = unsafe {
         syscall4(nr::SIGPROCMASK, 999, &newset as *const _ as u64, 0, 8)
     };
@@ -203,7 +203,7 @@ pub fn test_sigprocmask_negative() {
     }
 
     // 3. Try to block SIGKILL (kernel ignores this, but syscall returns 0)
-    let killmask: u64 = 1 << SIGKILL;
+    let killmask: u64 = 1 << (SIGKILL - 1);
     let ret = unsafe {
         syscall4(nr::SIGPROCMASK, SIG_BLOCK, &killmask as *const _ as u64, 0, 8)
     };
@@ -219,7 +219,7 @@ pub fn test_sigprocmask_negative() {
     // We verify the syscall works, not the mask contents for unblockable signals.
 
     // 4. Try to block SIGSTOP (kernel ignores this, but syscall returns 0)
-    let stopmask: u64 = 1 << SIGSTOP;
+    let stopmask: u64 = 1 << (SIGSTOP - 1);
     let ret = unsafe {
         syscall4(nr::SIGPROCMASK, SIG_BLOCK, &stopmask as *const _ as u64, 0, 8)
     };
@@ -388,7 +388,7 @@ pub fn test_signal_boundary() {
     // 2. Signal 1 (SIGHUP) - minimum valid signal
     // Don't actually send it, just check it's valid
     // We'll use sigprocmask to verify it's a valid signal number
-    let mask: u64 = 1 << SIGHUP;
+    let mask: u64 = 1 << (SIGHUP - 1);
     let ret = unsafe {
         syscall4(nr::SIGPROCMASK, SIG_BLOCK, &mask as *const _ as u64, 0, 8)
     };
@@ -401,7 +401,7 @@ pub fn test_signal_boundary() {
     }
 
     // 3. Signal 31 (SIGSYS) - maximum standard signal
-    let mask: u64 = 1 << SIGSYS;
+    let mask: u64 = 1 << (SIGSYS - 1);
     let ret = unsafe {
         syscall4(nr::SIGPROCMASK, SIG_BLOCK, &mask as *const _ as u64, 0, 8)
     };
@@ -639,7 +639,7 @@ pub fn test_signal_delivery_sigusr1() {
     }
 
     // Now safe to unblock — handler is installed, any pending signal goes to handler
-    let unblock: u64 = 1 << SIGUSR1;
+    let unblock: u64 = 1 << (SIGUSR1 - 1);
     unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
 
     // Reset state after unblock (handler may have fired from prior pending signal)
@@ -758,13 +758,13 @@ pub fn test_signal_blocked_pending() {
     }
 
     // Unblock to drain any stale pending SIGUSR1, then reset state
-    let unblock: u64 = 1 << SIGUSR1;
+    let unblock: u64 = 1 << (SIGUSR1 - 1);
     unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
     SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
     SIGNAL_NUMBER.store(0, Ordering::SeqCst);
 
     // Block SIGUSR1
-    let block_mask: u64 = 1 << SIGUSR1;
+    let block_mask: u64 = 1 << (SIGUSR1 - 1);
     let mut saved_mask = [0u64; 2];
     unsafe {
         syscall4(nr::SIGPROCMASK, SIG_BLOCK, &block_mask as *const _ as u64,
@@ -868,7 +868,7 @@ pub fn test_signal_multiple_delivery() {
     };
 
     // Now safe to unblock and drain any stale pending SIGUSR1
-    let unblock: u64 = 1 << SIGUSR1;
+    let unblock: u64 = 1 << (SIGUSR1 - 1);
     unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
     DELIVERY_COUNT.store(0, Ordering::SeqCst);
 
@@ -919,7 +919,7 @@ pub fn test_sigpending() {
 
     // Save current mask, then explicitly set mask with SIGUSR1 blocked
     let mut saved = [0u64; 2];
-    let block_mask: u64 = 1 << SIGUSR1;
+    let block_mask: u64 = 1 << (SIGUSR1 - 1);
     unsafe {
         syscall4(nr::SIGPROCMASK, SIG_SETMASK, &block_mask as *const _ as u64,
                  saved.as_mut_ptr() as u64, 8)
@@ -939,7 +939,7 @@ pub fn test_sigpending() {
         fail_errno("sigpending returns 0", 0, ret);
     }
 
-    if (pending[0] & (1 << SIGUSR1)) != 0 {
+    if (pending[0] & (1 << (SIGUSR1 - 1))) != 0 {
         pass("SIGUSR1 appears in pending set");
     } else {
         fail("SIGUSR1 appears in pending set");
@@ -961,7 +961,7 @@ pub fn test_sigtimedwait() {
     write_str("\n=== Signal: rt_sigtimedwait ===\n");
 
     // Explicitly set mask with SIGUSR1 blocked (deterministic state)
-    let block_mask: u64 = 1 << SIGUSR1;
+    let block_mask: u64 = 1 << (SIGUSR1 - 1);
     let mut saved = [0u64; 2];
     unsafe {
         syscall4(nr::SIGPROCMASK, SIG_SETMASK, &block_mask as *const _ as u64,
