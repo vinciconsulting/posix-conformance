@@ -156,16 +156,6 @@ unsafe extern "C" fn thread_entry_futex() -> ! {
     loop { core::hint::spin_loop(); }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// spawn_thread — the only place that needs custom asm
-//
-// Why: clone(CLONE_THREAD) gives the child a new stack. After the syscall
-// instruction, the child's RSP points to that new stack and the parent's
-// Rust stack frame is gone. We need 6 asm instructions to handle the fork:
-//   syscall → test rax → jnz (parent) / call entry → ud2 (child)
-// Everything else (flags, registers) uses Rust `in()` constraints.
-// ════════════════════════════════════════════════════════════════════════════
-
 fn spawn_thread(
     entry: unsafe extern "C" fn() -> !,
     tid_ptr: &AtomicI32,
@@ -174,30 +164,7 @@ fn spawn_thread(
 
     tid_ptr.store(-1, Ordering::SeqCst);
 
-    let ret: i64;
-    unsafe {
-        // Place entry fn pointer on the new stack for the child to pop+call
-        *((stack_top - 8) as *mut u64) = entry as u64;
-
-        core::arch::asm!(
-            "syscall",
-            "test rax, rax",
-            "jnz 2f",
-            // Child path: on new stack, pop entry address and call it
-            "pop rax",
-            "call rax",
-            "ud2",
-            "2:",
-            inout("rax") nr::CLONE => ret,
-            in("rdi") PTHREAD_FLAGS,
-            in("rsi") stack_top - 8,          // child stack pointer
-            in("rdx") tid_ptr as *const _ as u64,  // parent_tid
-            in("r10") tid_ptr as *const _ as u64,  // child_tid
-            in("r8")  0u64,                   // tls
-            out("rcx") _,
-            out("r11") _,
-        );
-    }
+    let ret = crate::arch::clone_thread(PTHREAD_FLAGS, stack_top, entry, tid_ptr as *const _);
 
     if ret < 0 {
         free_stack(stack_top);

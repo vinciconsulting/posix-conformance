@@ -51,15 +51,8 @@ extern "C" fn test_sig_handler(sig: i32) {
     SIGNAL_NUMBER.store(sig as u32, Ordering::SeqCst);
 }
 
-// Signal restorer (required for rt_sigaction)
-#[unsafe(naked)]
-#[unsafe(no_mangle)]
-extern "C" fn sig_restorer() {
-    core::arch::naked_asm!(
-        "mov rax, 15",  // __NR_rt_sigreturn
-        "syscall",
-    );
-}
+// sig_restorer lives in crate::arch — re-import for local use
+use crate::arch::sig_restorer;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Structures
