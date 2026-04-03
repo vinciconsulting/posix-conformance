@@ -11,7 +11,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::nr;
 use crate::{write_str, write_num, syscall0, syscall2, syscall3, syscall4};
-
+use crate::{PseLevel, TestCategory};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Signal constants
@@ -78,8 +78,8 @@ struct Sigaction {
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Positive tests for sigprocmask
-pub fn test_sigprocmask_positive(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signals: sigprocmask positive ===\n");
+pub fn test_sigprocmask_positive(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. Query current mask (how=0, set=NULL)
     let mut oldset = [0u64; 2];
@@ -179,8 +179,8 @@ pub fn test_sigprocmask_positive(cat: &mut crate::TestCategory) {
 }
 
 /// Negative tests for sigprocmask
-pub fn test_sigprocmask_negative(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signals: sigprocmask negative ===\n");
+pub fn test_sigprocmask_negative(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. Invalid "how" value
     let newset: u64 = 1 << (SIGUSR1 - 1);
@@ -232,8 +232,8 @@ pub fn test_sigprocmask_negative(cat: &mut crate::TestCategory) {
 }
 
 /// Positive tests for kill
-pub fn test_kill_positive(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signals: kill positive ===\n");
+pub fn test_kill_positive(cat: &mut TestCategory) {
+    cat.header();
 
     let pid = unsafe { syscall0(nr::GETPID) };
 
@@ -258,8 +258,8 @@ pub fn test_kill_positive(cat: &mut crate::TestCategory) {
 }
 
 /// Negative tests for kill
-pub fn test_kill_negative(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signals: kill negative ===\n");
+pub fn test_kill_negative(cat: &mut TestCategory) {
+    cat.header();
 
     let pid = unsafe { syscall0(nr::GETPID) };
 
@@ -309,8 +309,8 @@ pub fn test_kill_negative(cat: &mut crate::TestCategory) {
 }
 
 /// Boundary tests for signals
-pub fn test_signal_boundary(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signals: boundary cases ===\n");
+pub fn test_signal_boundary(cat: &mut TestCategory) {
+    cat.header();
 
     let pid = unsafe { syscall0(nr::GETPID) };
 
@@ -350,15 +350,12 @@ pub fn test_signal_boundary(cat: &mut crate::TestCategory) {
     }
 
     // 4. Signal 64 (SIGRTMAX in extended signal range)
-    // Test validity by blocking it (don't actually send it - that would kill us!)
-    // Real-time signals have default action of terminate, so we must block before testing
     let rt_mask: u64 = 1 << 63; // Signal 64 is bit 63 (0-indexed in mask)
     let ret = unsafe {
         syscall4(nr::SIGPROCMASK, SIG_BLOCK, &rt_mask as *const _ as u64, 0, 8)
     };
     if ret == 0 || ret == EINVAL {
         cat.pass("sigprocmask: signal 64 (SIGRTMAX) handled");
-        // Unblock if we succeeded
         if ret == 0 {
             unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &rt_mask as *const _ as u64, 0, 8) };
         }
@@ -378,7 +375,6 @@ pub fn test_signal_boundary(cat: &mut crate::TestCategory) {
     }
 
     // 6. Full mask (test that blocking all signals is accepted)
-    // Note: SIGKILL/SIGSTOP cannot be blocked - kernel enforces this at delivery time
     let full: u64 = u64::MAX;
     let mut saved = [0u64; 2];
     let ret = unsafe {
@@ -387,7 +383,6 @@ pub fn test_signal_boundary(cat: &mut crate::TestCategory) {
     };
     if ret == 0 {
         cat.pass("sigprocmask: set full mask accepted");
-        // Restore original mask
         unsafe { syscall4(nr::SIGPROCMASK, SIG_SETMASK, saved.as_ptr() as u64, 0, 8) };
     } else {
         cat.fail_errno("sigprocmask: set full mask accepted", 0, ret);
@@ -395,11 +390,8 @@ pub fn test_signal_boundary(cat: &mut crate::TestCategory) {
 }
 
 /// Test sigaction basics
-pub fn test_sigaction_positive(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signals: sigaction positive ===\n");
-
-    // Note: sigaction requires rt_sigaction (nr 13) with specific structure layout
-    // This is complex because the kernel expects sa_restorer to be set
+pub fn test_sigaction_positive(cat: &mut TestCategory) {
+    cat.header();
 
     let mut sa = Sigaction {
         sa_handler: test_sig_handler as *const () as u64,
@@ -429,7 +421,7 @@ pub fn test_sigaction_positive(cat: &mut crate::TestCategory) {
         cat.pass("sigaction: install SIGUSR1 handler");
     } else {
         cat.fail_errno("sigaction: install SIGUSR1 handler", 0, ret);
-        return; // Can't proceed without handler
+        return;
     }
 
     // 2. Query handler (set=NULL)
@@ -482,8 +474,8 @@ pub fn test_sigaction_positive(cat: &mut crate::TestCategory) {
 }
 
 /// Negative tests for sigaction
-pub fn test_sigaction_negative(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signals: sigaction negative ===\n");
+pub fn test_sigaction_negative(cat: &mut TestCategory) {
+    cat.header();
 
     let sa = Sigaction {
         sa_handler: test_sig_handler as *const () as u64,
@@ -554,12 +546,10 @@ extern "C" fn test_sig_handler_usr2(sig: i32) {
     SIGNAL_NUMBER.store(sig as u32, Ordering::SeqCst);
 }
 
-/// Test: install SIGUSR1 handler → kill(self, SIGUSR1) → verify handler ran
-pub fn test_signal_delivery_sigusr1(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signal delivery: SIGUSR1 handler invoked ===\n");
+/// Test: install SIGUSR1 handler -> kill(self, SIGUSR1) -> verify handler ran
+pub fn test_signal_delivery_sigusr1(cat: &mut TestCategory) {
+    cat.header();
 
-    // Install handler BEFORE unblocking (if SIGUSR1 is pending with SIG_DFL,
-    // unblocking without a handler would terminate the process)
     let mut sa = Sigaction {
         sa_handler: test_sig_handler as *const () as u64,
         sa_flags: SA_RESTORER,
@@ -575,15 +565,12 @@ pub fn test_signal_delivery_sigusr1(cat: &mut crate::TestCategory) {
         return;
     }
 
-    // Now safe to unblock — handler is installed, any pending signal goes to handler
     let unblock: u64 = 1 << (SIGUSR1 - 1);
     unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
 
-    // Reset state after unblock (handler may have fired from prior pending signal)
     SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
     SIGNAL_NUMBER.store(0, Ordering::SeqCst);
 
-    // Send SIGUSR1 to self
     let pid = unsafe { syscall0(nr::GETPID) };
     let ret = unsafe { syscall2(nr::KILL, pid as u64, SIGUSR1) };
     if ret != 0 {
@@ -591,7 +578,6 @@ pub fn test_signal_delivery_sigusr1(cat: &mut crate::TestCategory) {
         return;
     }
 
-    // Verify handler ran
     let received = SIGNAL_RECEIVED.load(Ordering::SeqCst);
     if received == 1 {
         cat.pass("SIGUSR1 handler was invoked");
@@ -602,7 +588,6 @@ pub fn test_signal_delivery_sigusr1(cat: &mut crate::TestCategory) {
         write_str("\n");
     }
 
-    // Verify correct signal number was passed
     let signo = SIGNAL_NUMBER.load(Ordering::SeqCst);
     if signo == SIGUSR1 as u32 {
         cat.pass("handler received correct signal number (10)");
@@ -613,16 +598,15 @@ pub fn test_signal_delivery_sigusr1(cat: &mut crate::TestCategory) {
         write_str("\n");
     }
 
-    // Restore default
     sa.sa_handler = 0;
     sa.sa_flags = 0;
     sa.sa_restorer = 0;
     unsafe { syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8) };
 }
 
-/// Test: install SIGUSR2 handler → tgkill(self, SIGUSR2) → verify
-pub fn test_signal_delivery_sigusr2(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signal delivery: SIGUSR2 via tgkill ===\n");
+/// Test: install SIGUSR2 handler -> tgkill(self, SIGUSR2) -> verify
+pub fn test_signal_delivery_sigusr2(cat: &mut TestCategory) {
+    cat.header();
 
     SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
     SIGNAL_NUMBER.store(0, Ordering::SeqCst);
@@ -642,7 +626,6 @@ pub fn test_signal_delivery_sigusr2(cat: &mut crate::TestCategory) {
         return;
     }
 
-    // Send via tgkill (more precise: targets specific thread)
     let pid = unsafe { syscall0(nr::GETPID) };
     let tid = unsafe { syscall0(nr::GETTID) };
     let ret = unsafe { syscall3(nr::TGKILL, pid as u64, tid as u64, SIGUSR2) };
@@ -668,7 +651,6 @@ pub fn test_signal_delivery_sigusr2(cat: &mut crate::TestCategory) {
         write_str("\n");
     }
 
-    // Restore
     sa.sa_handler = 0;
     sa.sa_flags = 0;
     sa.sa_restorer = 0;
@@ -676,10 +658,9 @@ pub fn test_signal_delivery_sigusr2(cat: &mut crate::TestCategory) {
 }
 
 /// Test: blocked signal is held pending, delivered on unblock
-pub fn test_signal_blocked_pending(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signal delivery: blocked → pending → delivered on unblock ===\n");
+pub fn test_signal_blocked_pending(cat: &mut TestCategory) {
+    cat.header();
 
-    // Install handler FIRST (safe to unblock after)
     let mut sa = Sigaction {
         sa_handler: test_sig_handler as *const () as u64,
         sa_flags: SA_RESTORER,
@@ -694,13 +675,11 @@ pub fn test_signal_blocked_pending(cat: &mut crate::TestCategory) {
         return;
     }
 
-    // Unblock to drain any stale pending SIGUSR1, then reset state
     let unblock: u64 = 1 << (SIGUSR1 - 1);
     unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
     SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
     SIGNAL_NUMBER.store(0, Ordering::SeqCst);
 
-    // Block SIGUSR1
     let block_mask: u64 = 1 << (SIGUSR1 - 1);
     let mut saved_mask = [0u64; 2];
     unsafe {
@@ -708,11 +687,9 @@ pub fn test_signal_blocked_pending(cat: &mut crate::TestCategory) {
                  saved_mask.as_mut_ptr() as u64, 8)
     };
 
-    // Send SIGUSR1 while blocked
     let pid = unsafe { syscall0(nr::GETPID) };
     unsafe { syscall2(nr::KILL, pid as u64, SIGUSR1) };
 
-    // Verify handler has NOT run yet (signal is pending)
     let received = SIGNAL_RECEIVED.load(Ordering::SeqCst);
     if received == 0 {
         cat.pass("blocked signal not delivered yet");
@@ -720,7 +697,6 @@ pub fn test_signal_blocked_pending(cat: &mut crate::TestCategory) {
         cat.fail("blocked signal not delivered yet (handler ran prematurely)");
     }
 
-    // Unblock SIGUSR1 — pending signal should be delivered immediately
     unsafe {
         syscall4(nr::SIGPROCMASK, SIG_SETMASK, saved_mask.as_ptr() as u64, 0, 8)
     };
@@ -735,7 +711,6 @@ pub fn test_signal_blocked_pending(cat: &mut crate::TestCategory) {
         write_str("\n");
     }
 
-    // Restore default handler
     sa.sa_handler = 0;
     sa.sa_flags = 0;
     sa.sa_restorer = 0;
@@ -743,8 +718,8 @@ pub fn test_signal_blocked_pending(cat: &mut crate::TestCategory) {
 }
 
 /// Test: SIGALRM delivery (timer signal)
-pub fn test_signal_delivery_sigalrm(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signal delivery: SIGALRM ===\n");
+pub fn test_signal_delivery_sigalrm(cat: &mut TestCategory) {
+    cat.header();
 
     SIGNAL_RECEIVED.store(0, Ordering::SeqCst);
     SIGNAL_NUMBER.store(0, Ordering::SeqCst);
@@ -783,8 +758,8 @@ pub fn test_signal_delivery_sigalrm(cat: &mut crate::TestCategory) {
 }
 
 /// Test: multiple signals delivered in sequence
-pub fn test_signal_multiple_delivery(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signal delivery: multiple signals in sequence ===\n");
+pub fn test_signal_multiple_delivery(cat: &mut TestCategory) {
+    cat.header();
 
     static DELIVERY_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -793,7 +768,6 @@ pub fn test_signal_multiple_delivery(cat: &mut crate::TestCategory) {
         DELIVERY_COUNT.fetch_add(1, Ordering::SeqCst);
     }
 
-    // Install handler BEFORE unblocking
     let mut sa = Sigaction {
         sa_handler: counting_handler as *const () as u64,
         sa_flags: SA_RESTORER,
@@ -804,23 +778,20 @@ pub fn test_signal_multiple_delivery(cat: &mut crate::TestCategory) {
         syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8)
     };
 
-    // Now safe to unblock and drain any stale pending SIGUSR1
     let unblock: u64 = 1 << (SIGUSR1 - 1);
     unsafe { syscall4(nr::SIGPROCMASK, SIG_UNBLOCK, &unblock as *const _ as u64, 0, 8) };
     DELIVERY_COUNT.store(0, Ordering::SeqCst);
 
     let pid = unsafe { syscall0(nr::GETPID) };
 
-    // Send 5 signals
     for _ in 0..5 {
         unsafe { syscall2(nr::KILL, pid as u64, SIGUSR1) };
     }
 
     let count = DELIVERY_COUNT.load(Ordering::SeqCst);
     if count == 5 {
-        cat.pass("5 signals → 5 handler invocations");
+        cat.pass("5 signals -> 5 handler invocations");
     } else {
-        // Signals may coalesce if pending — count >= 1 is valid
         if count >= 1 {
             cat.pass("signals delivered (some may coalesce)");
             write_str("    delivered ");
@@ -831,7 +802,6 @@ pub fn test_signal_multiple_delivery(cat: &mut crate::TestCategory) {
         }
     }
 
-    // Restore default
     sa.sa_handler = 0;
     sa.sa_flags = 0;
     sa.sa_restorer = 0;
@@ -839,13 +809,12 @@ pub fn test_signal_multiple_delivery(cat: &mut crate::TestCategory) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// sigpending — query pending signal set
+// sigpending -- query pending signal set
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_sigpending(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signal: sigpending ===\n");
+pub fn test_sigpending(cat: &mut TestCategory) {
+    cat.header();
 
-    // Install handler FIRST so delivery on unblock doesn't kill us
     let mut sa = Sigaction {
         sa_handler: test_sig_handler as *const () as u64,
         sa_flags: SA_RESTORER,
@@ -854,7 +823,6 @@ pub fn test_sigpending(cat: &mut crate::TestCategory) {
     };
     unsafe { syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8) };
 
-    // Save current mask, then explicitly set mask with SIGUSR1 blocked
     let mut saved = [0u64; 2];
     let block_mask: u64 = 1 << (SIGUSR1 - 1);
     unsafe {
@@ -865,7 +833,6 @@ pub fn test_sigpending(cat: &mut crate::TestCategory) {
     let pid = unsafe { syscall0(nr::GETPID) };
     unsafe { syscall2(nr::KILL, pid as u64, SIGUSR1) };
 
-    // Query pending signals
     let mut pending = [0u64; 2];
     let ret = unsafe {
         syscall2(nr::SIGPENDING, pending.as_mut_ptr() as u64, 8)
@@ -882,22 +849,19 @@ pub fn test_sigpending(cat: &mut crate::TestCategory) {
         cat.fail("SIGUSR1 appears in pending set");
     }
 
-    // Unblock to clear the pending signal
     unsafe { syscall4(nr::SIGPROCMASK, SIG_SETMASK, saved.as_ptr() as u64, 0, 8) };
 
-    // Restore default
     sa.sa_handler = 0; sa.sa_flags = 0; sa.sa_restorer = 0;
     unsafe { syscall4(nr::SIGACTION, SIGUSR1, &sa as *const _ as u64, 0, 8) };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// rt_sigtimedwait — synchronous signal wait
+// rt_sigtimedwait -- synchronous signal wait
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_sigtimedwait(cat: &mut crate::TestCategory) {
-    write_str("\n=== Signal: rt_sigtimedwait ===\n");
+pub fn test_sigtimedwait(cat: &mut TestCategory) {
+    cat.header();
 
-    // Explicitly set mask with SIGUSR1 blocked (deterministic state)
     let block_mask: u64 = 1 << (SIGUSR1 - 1);
     let mut saved = [0u64; 2];
     unsafe {
@@ -908,7 +872,6 @@ pub fn test_sigtimedwait(cat: &mut crate::TestCategory) {
     let pid = unsafe { syscall0(nr::GETPID) };
     unsafe { syscall2(nr::KILL, pid as u64, SIGUSR1) };
 
-    // sigtimedwait with zero timeout (immediate)
     let ts = crate::Timespec { tv_sec: 0, tv_nsec: 0 };
     let ret = unsafe {
         syscall4(nr::SIGTIMEDWAIT, &block_mask as *const _ as u64, 0,
@@ -922,7 +885,6 @@ pub fn test_sigtimedwait(cat: &mut crate::TestCategory) {
         cat.fail_errno("rt_sigtimedwait returns signal", SIGUSR1 as i64, ret);
     }
 
-    // Timeout with no pending signal → EAGAIN
     let ts2 = crate::Timespec { tv_sec: 0, tv_nsec: 1_000_000 }; // 1ms
     let ret = unsafe {
         syscall4(nr::SIGTIMEDWAIT, &block_mask as *const _ as u64, 0,
@@ -934,7 +896,6 @@ pub fn test_sigtimedwait(cat: &mut crate::TestCategory) {
         cat.fail_errno("rt_sigtimedwait timeout returns EAGAIN", -11, ret);
     }
 
-    // Restore mask
     unsafe { syscall4(nr::SIGPROCMASK, SIG_SETMASK, saved.as_ptr() as u64, 0, 8) };
 }
 
@@ -943,48 +904,66 @@ pub fn test_sigtimedwait(cat: &mut crate::TestCategory) {
 // ════════════════════════════════════════════════════════════════════════════
 
 pub fn run_all(results: &mut crate::Results) {
-    use crate::{PseLevel, TestCategory};
     crate::write_banner("SIGNAL TESTS");
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "sigprocmask: positive");
-    test_sigprocmask_positive(&mut cat); results.add(cat);
+    // Positive tests
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signals: sigprocmask positive");
+    test_sigprocmask_positive(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "kill: positive");
-    test_kill_positive(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signals: kill positive");
+    test_kill_positive(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "sigaction: positive");
-    test_sigaction_positive(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signals: sigaction positive");
+    test_sigaction_positive(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "sigprocmask: negative");
-    test_sigprocmask_negative(&mut cat); results.add(cat);
+    // Negative tests
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signals: sigprocmask negative");
+    test_sigprocmask_negative(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "kill: negative");
-    test_kill_negative(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signals: kill negative");
+    test_kill_negative(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "sigaction: negative");
-    test_sigaction_negative(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signals: sigaction negative");
+    test_sigaction_negative(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "signal: boundary cases");
-    test_signal_boundary(&mut cat); results.add(cat);
+    // Boundary tests
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signals: boundary cases");
+    test_signal_boundary(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "signal delivery: SIGUSR1");
-    test_signal_delivery_sigusr1(&mut cat); results.add(cat);
+    // Signal delivery verification
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signal delivery: SIGUSR1 handler invoked");
+    test_signal_delivery_sigusr1(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "signal delivery: SIGUSR2 via tgkill");
-    test_signal_delivery_sigusr2(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signal delivery: SIGUSR2 via tgkill");
+    test_signal_delivery_sigusr2(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "signal delivery: blocked → pending → unblock");
-    test_signal_blocked_pending(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signal delivery: blocked -> pending -> delivered on unblock");
+    test_signal_blocked_pending(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "signal delivery: SIGALRM");
-    test_signal_delivery_sigalrm(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signal delivery: SIGALRM");
+    test_signal_delivery_sigalrm(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "signal delivery: multiple in sequence");
-    test_signal_multiple_delivery(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signal delivery: multiple signals in sequence");
+    test_signal_multiple_delivery(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "sigpending");
-    test_sigpending(&mut cat); results.add(cat);
+    // Realtime signal extensions
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signal: sigpending");
+    test_sigpending(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE51, "rt_sigtimedwait");
-    test_sigtimedwait(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Signal: rt_sigtimedwait");
+    test_sigtimedwait(&mut cat);
+    results.add(cat);
 }

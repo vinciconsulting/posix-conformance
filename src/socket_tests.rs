@@ -6,8 +6,8 @@
 //! - bind/listen/accept (where possible without network)
 //! - shutdown
 
-use crate::nr;
-use crate::{write_str, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6};
+use crate::{nr, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6};
+use crate::{PseLevel, TestCategory};
 
 // Error codes
 const EPERM: i64 = -1;
@@ -50,8 +50,8 @@ const IPPROTO_UDP: u64 = 17;
 // SOCKET: Positive Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_socket_positive(cat: &mut crate::TestCategory) {
-    write_str("\n=== socket: positive tests ===\n");
+fn test_socket_positive(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. TCP socket (AF_INET, SOCK_STREAM)
     let fd = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_STREAM, 0) };
@@ -138,8 +138,8 @@ fn test_socket_positive(cat: &mut crate::TestCategory) {
 // SOCKET: Negative Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_socket_negative(cat: &mut crate::TestCategory) {
-    write_str("\n=== socket: negative tests ===\n");
+fn test_socket_negative(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. Invalid address family
     let ret = unsafe { syscall3(nr::SOCKET, 999, SOCK_STREAM, 0) };
@@ -149,7 +149,7 @@ fn test_socket_negative(cat: &mut crate::TestCategory) {
         cat.fail_errno("socket(AF=999) -EAFNOSUPPORT", EAFNOSUPPORT, ret);
     }
 
-    // 2. Invalid socket type — POSIX requires EINVAL or EPROTONOSUPPORT
+    // 2. Invalid socket type -- POSIX requires EINVAL or EPROTONOSUPPORT
     let ret = unsafe { syscall3(nr::SOCKET, AF_INET, 999, 0) };
     if ret == EINVAL || ret == EPROTONOSUPPORT {
         cat.pass("socket(type=999) valid errno");
@@ -158,7 +158,7 @@ fn test_socket_negative(cat: &mut crate::TestCategory) {
         if ret >= 0 { unsafe { syscall1(nr::CLOSE, ret as u64) }; }
     }
 
-    // 3. Invalid protocol for type — POSIX requires EPROTONOSUPPORT
+    // 3. Invalid protocol for type -- POSIX requires EPROTONOSUPPORT
     let ret = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_STREAM, IPPROTO_UDP) };
     if ret == EPROTONOSUPPORT {
         cat.pass("socket(STREAM, UDP) -EPROTONOSUPPORT");
@@ -170,7 +170,7 @@ fn test_socket_negative(cat: &mut crate::TestCategory) {
         cat.fail_errno("socket(STREAM, UDP) unexpected error", EPROTONOSUPPORT, ret);
     }
 
-    // 4. RAW socket without privilege — expects EPERM, EACCES, or EPROTONOSUPPORT
+    // 4. RAW socket without privilege -- expects EPERM, EACCES, or EPROTONOSUPPORT
     let ret = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_RAW, 0) };
     if ret == EPERM || ret == EACCES || ret == EPROTONOSUPPORT {
         cat.pass("socket(RAW) denied (expected error)");
@@ -186,8 +186,8 @@ fn test_socket_negative(cat: &mut crate::TestCategory) {
 // SETSOCKOPT/GETSOCKOPT: Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_sockopt(cat: &mut crate::TestCategory) {
-    write_str("\n=== setsockopt/getsockopt: tests ===\n");
+fn test_sockopt(cat: &mut TestCategory) {
+    cat.header();
 
     let fd = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_STREAM, 0) };
     if fd < 0 {
@@ -340,8 +340,8 @@ fn test_sockopt(cat: &mut crate::TestCategory) {
 // SOCKOPT: Negative Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_sockopt_negative(cat: &mut crate::TestCategory) {
-    write_str("\n=== sockopt: negative tests ===\n");
+fn test_sockopt_negative(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. getsockopt on non-socket
     let mut fds = [0i32; 2];
@@ -441,8 +441,8 @@ struct SockaddrIn {
     sin_zero: [u8; 8],
 }
 
-fn test_bind_listen(cat: &mut crate::TestCategory) {
-    write_str("\n=== bind/listen: tests ===\n");
+fn test_bind_listen(cat: &mut TestCategory) {
+    cat.header();
 
     let fd = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_STREAM, 0) };
     if fd < 0 {
@@ -529,8 +529,8 @@ fn test_bind_listen(cat: &mut crate::TestCategory) {
 // SHUTDOWN: Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_shutdown(cat: &mut crate::TestCategory) {
-    write_str("\n=== shutdown: tests ===\n");
+fn test_shutdown(cat: &mut TestCategory) {
+    cat.header();
 
     const SHUT_RDWR: u64 = 2;
 
@@ -558,7 +558,7 @@ fn test_shutdown(cat: &mut crate::TestCategory) {
         cat.fail_errno("shutdown(bad fd) -EBADF", EBADF, ret);
     }
 
-    // shutdown with invalid how — POSIX requires EINVAL
+    // shutdown with invalid how -- POSIX requires EINVAL
     let ret = unsafe { syscall2(nr::SHUTDOWN, fd as u64, 999) };
     if ret == EINVAL {
         cat.pass("shutdown(how=999) -EINVAL");
@@ -573,8 +573,8 @@ fn test_shutdown(cat: &mut crate::TestCategory) {
 // UDP Socket Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_udp_socket(cat: &mut crate::TestCategory) {
-    write_str("\n=== UDP socket: tests ===\n");
+fn test_udp_socket(cat: &mut TestCategory) {
+    cat.header();
 
     let fd = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_DGRAM, 0) };
     if fd < 0 {
@@ -620,11 +620,11 @@ fn test_udp_socket(cat: &mut crate::TestCategory) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// TCP CONNECT → ACCEPT → SEND → RECV: End-to-end data flow
+// TCP CONNECT -> ACCEPT -> SEND -> RECV: End-to-end data flow
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_tcp_data_flow(cat: &mut crate::TestCategory) {
-    write_str("\n=== TCP: connect → accept → send → recv ===\n");
+fn test_tcp_data_flow(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. Create listener socket
     let listen_fd = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_STREAM, 0) };
@@ -810,9 +810,9 @@ fn test_tcp_data_flow(cat: &mut crate::TestCategory) {
                  recv_buf.as_mut_ptr() as u64, 64)
     };
     if nrecv == 0 {
-        cat.pass("shutdown(SHUT_WR) → server reads EOF");
+        cat.pass("shutdown(SHUT_WR) -> server reads EOF");
     } else {
-        cat.fail("shutdown(SHUT_WR) → server reads EOF");
+        cat.fail("shutdown(SHUT_WR) -> server reads EOF");
     }
 
     // Cleanup
@@ -824,11 +824,11 @@ fn test_tcp_data_flow(cat: &mut crate::TestCategory) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// UDP SENDTO → RECVFROM: Datagram data flow
+// UDP SENDTO -> RECVFROM: Datagram data flow
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_udp_data_flow(cat: &mut crate::TestCategory) {
-    write_str("\n=== UDP: sendto → recvfrom ===\n");
+fn test_udp_data_flow(cat: &mut TestCategory) {
+    cat.header();
 
     // Create two UDP sockets (server + client)
     let server_fd = unsafe { syscall3(nr::SOCKET, AF_INET, SOCK_DGRAM, 0) };
@@ -937,8 +937,8 @@ fn test_udp_data_flow(cat: &mut crate::TestCategory) {
 // UNIX DOMAIN SOCKET: Socketpair-style data flow
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_unix_data_flow(cat: &mut crate::TestCategory) {
-    write_str("\n=== Unix socket: bind → connect → send → recv ===\n");
+fn test_unix_data_flow(cat: &mut TestCategory) {
+    cat.header();
 
     // Create listener
     let listen_fd = unsafe { syscall3(nr::SOCKET, AF_UNIX, SOCK_STREAM, 0) };
@@ -1050,8 +1050,8 @@ fn test_unix_data_flow(cat: &mut crate::TestCategory) {
 // SOCKETPAIR: Create connected socket pair
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_socketpair(cat: &mut crate::TestCategory) {
-    write_str("\n=== socketpair: tests ===\n");
+fn test_socketpair(cat: &mut TestCategory) {
+    cat.header();
 
     let mut sv = [0i32; 2];
     let ret = unsafe {
@@ -1119,8 +1119,8 @@ fn test_socketpair(cat: &mut crate::TestCategory) {
 // SENDMSG / RECVMSG: Scatter-gather I/O
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_sendmsg_recvmsg(cat: &mut crate::TestCategory) {
-    write_str("\n=== sendmsg/recvmsg: scatter-gather ===\n");
+fn test_sendmsg_recvmsg(cat: &mut TestCategory) {
+    cat.header();
 
     let mut sv = [0i32; 2];
     let ret = unsafe {
@@ -1207,41 +1207,52 @@ fn test_sendmsg_recvmsg(cat: &mut crate::TestCategory) {
 
 /// Run all socket tests
 pub fn run_all(results: &mut crate::Results) {
-    use crate::{PseLevel, TestCategory};
-
     let mut cat = TestCategory::new(PseLevel::PSE53, "socket: positive tests");
-    test_socket_positive(&mut cat); results.add(cat);
+    test_socket_positive(&mut cat);
+    results.add(cat);
 
     let mut cat = TestCategory::new(PseLevel::PSE53, "socket: negative tests");
-    test_socket_negative(&mut cat); results.add(cat);
+    test_socket_negative(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE53, "setsockopt/getsockopt");
-    test_sockopt(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE53, "setsockopt/getsockopt: tests");
+    test_sockopt(&mut cat);
+    results.add(cat);
 
     let mut cat = TestCategory::new(PseLevel::PSE53, "sockopt: negative tests");
-    test_sockopt_negative(&mut cat); results.add(cat);
+    test_sockopt_negative(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE53, "bind/listen");
-    test_bind_listen(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE53, "bind/listen: tests");
+    test_bind_listen(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE53, "shutdown");
-    test_shutdown(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE53, "shutdown: tests");
+    test_shutdown(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE53, "UDP socket");
-    test_udp_socket(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE53, "UDP socket: tests");
+    test_udp_socket(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE53, "TCP: connect → accept → send → recv");
-    test_tcp_data_flow(&mut cat); results.add(cat);
+    // End-to-end data flow
+    let mut cat = TestCategory::new(PseLevel::PSE53, "TCP: connect -> accept -> send -> recv");
+    test_tcp_data_flow(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE53, "UDP: sendto → recvfrom");
-    test_udp_data_flow(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE53, "UDP: sendto -> recvfrom");
+    test_udp_data_flow(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE53, "Unix socket: data flow");
-    test_unix_data_flow(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE53, "Unix socket: bind -> connect -> send -> recv");
+    test_unix_data_flow(&mut cat);
+    results.add(cat);
 
-    let mut cat = TestCategory::new(PseLevel::PSE53, "socketpair");
-    test_socketpair(&mut cat); results.add(cat);
+    let mut cat = TestCategory::new(PseLevel::PSE53, "socketpair: tests");
+    test_socketpair(&mut cat);
+    results.add(cat);
 
     let mut cat = TestCategory::new(PseLevel::PSE53, "sendmsg/recvmsg: scatter-gather");
-    test_sendmsg_recvmsg(&mut cat); results.add(cat);
+    test_sendmsg_recvmsg(&mut cat);
+    results.add(cat);
 }

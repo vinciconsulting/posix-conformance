@@ -16,7 +16,7 @@
 
 use core::arch::asm;
 use core::panic::PanicInfo;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::AtomicU32;
 
 mod memory_tests;
 mod pipe_tests;
@@ -394,12 +394,11 @@ pub struct TestCategory {
     pub name: &'static str,
     pub passed: u32,
     pub failed: u32,
-    pub skipped: u32,
 }
 
 impl TestCategory {
     pub fn new(level: PseLevel, name: &'static str) -> Self {
-        Self { level, name, passed: 0, failed: 0, skipped: 0 }
+        Self { level, name, passed: 0, failed: 0 }
     }
 
     pub fn header(&self) {
@@ -456,16 +455,10 @@ impl TestCategory {
         }
     }
 
-    pub fn skip(&mut self, name: &str) {
-        write_str("  [SKIP] ");
-        write_str(name);
-        write_str("\n");
-        self.skipped += 1;
-    }
 }
 
 pub struct Results {
-    categories: [Option<(PseLevel, &'static str, u32, u32, u32)>; 64],
+    categories: [Option<(PseLevel, &'static str, u32, u32)>; 64],
     count: usize,
 }
 
@@ -476,33 +469,33 @@ impl Results {
 
     pub fn add(&mut self, cat: TestCategory) {
         if self.count < 64 {
-            self.categories[self.count] = Some((cat.level, cat.name, cat.passed, cat.failed, cat.skipped));
+            self.categories[self.count] = Some((cat.level, cat.name, cat.passed, cat.failed));
             self.count += 1;
         }
     }
 
-    fn level_totals(&self, level: PseLevel) -> (u32, u32, u32) {
-        let (mut p, mut f, mut s) = (0u32, 0u32, 0u32);
+    fn level_totals(&self, level: PseLevel) -> (u32, u32) {
+        let (mut p, mut f) = (0u32, 0u32);
         for i in 0..self.count {
-            if let Some((l, _, passed, failed, skipped)) = self.categories[i] {
-                if l == level { p += passed; f += failed; s += skipped; }
+            if let Some((l, _, passed, failed)) = self.categories[i] {
+                if l == level { p += passed; f += failed; }
             }
         }
-        (p, f, s)
+        (p, f)
     }
 
     pub fn summary(&self) {
         write_str("\n════════════════════════════════════════════════════════════\n");
 
-        let (mut total_p, mut total_f, mut total_s) = (0u32, 0u32, 0u32);
+        let (mut total_p, mut total_f) = (0u32, 0u32);
 
         for &(level, label) in &[
             (PseLevel::PSE51, "PSE51"),
             (PseLevel::PSE52, "PSE52"),
             (PseLevel::PSE53, "PSE53"),
         ] {
-            let (p, f, s) = self.level_totals(level);
-            if p + f + s == 0 { continue; }
+            let (p, f) = self.level_totals(level);
+            if p + f == 0 { continue; }
             let total = p + f;
             write_str(label);
             write_str(": ");
@@ -514,15 +507,9 @@ impl Results {
                 write_num((p as i64 * 100) / total as i64);
                 write_str("%)");
             }
-            if s > 0 {
-                write_str(", ");
-                write_num(s as i64);
-                write_str(" skipped");
-            }
             write_str("\n");
             total_p += p;
             total_f += f;
-            total_s += s;
         }
 
         let total = total_p + total_f;
@@ -534,11 +521,6 @@ impl Results {
             write_str(" (");
             write_num((total_p as i64 * 100) / total as i64);
             write_str("%)");
-        }
-        if total_s > 0 {
-            write_str(", ");
-            write_num(total_s as i64);
-            write_str(" skipped");
         }
         write_str("\n");
 
@@ -559,46 +541,6 @@ impl Results {
     }
 }
 
-// Keep legacy free functions that delegate to a global — needed during migration.
-// Modules that haven't been migrated yet can still call pass()/fail().
-static PASS: AtomicU32 = AtomicU32::new(0);
-static FAIL: AtomicU32 = AtomicU32::new(0);
-
-pub fn pass(name: &str) {
-    write_str("  [PASS] ");
-    write_str(name);
-    write_str("\n");
-    PASS.fetch_add(1, Ordering::Relaxed);
-}
-
-pub fn fail(name: &str) {
-    write_str("  [FAIL] ");
-    write_str(name);
-    write_str("\n");
-    FAIL.fetch_add(1, Ordering::Relaxed);
-}
-
-pub fn fail_expected(name: &str, expected: u64, got: u64) {
-    write_str("  [FAIL] ");
-    write_str(name);
-    write_str(" (expected ");
-    write_hex(expected);
-    write_str(", got ");
-    write_hex(got);
-    write_str(")\n");
-    FAIL.fetch_add(1, Ordering::Relaxed);
-}
-
-pub fn fail_errno(name: &str, expected: i64, got: i64) {
-    write_str("  [FAIL] ");
-    write_str(name);
-    write_str(" (expected ");
-    write_num(expected);
-    write_str(", got ");
-    write_num(got);
-    write_str(")\n");
-    FAIL.fetch_add(1, Ordering::Relaxed);
-}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Common structures
