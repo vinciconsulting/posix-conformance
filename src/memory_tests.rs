@@ -5,7 +5,7 @@
 //! - Negative: invalid args → specific errno
 //! - Boundary: edge cases (zero length, large sizes, alignment)
 
-use crate::{fail, fail_errno, nr, pass, syscall2, syscall3, syscall6, write_str};
+use crate::{nr, syscall2, syscall3, syscall6, PseLevel, TestCategory};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constants
@@ -52,38 +52,39 @@ fn is_valid_addr(ret: i64) -> bool {
 // MMAP: Positive Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_mmap_positive() {
-    write_str("\n=== mmap: positive tests ===\n");
+fn test_mmap_positive(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "mmap: positive tests");
+    cat.header();
 
     // 1. Basic anonymous RW mapping
     let addr = mmap_anon(4096, PROT_READ | PROT_WRITE);
     if is_valid_addr(addr) {
-        pass("mmap(ANON, RW, 4K) valid address");
+        cat.pass("mmap(ANON, RW, 4K) valid address");
         unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
     } else {
-        fail("mmap(ANON, RW, 4K) valid address");
+        cat.fail("mmap(ANON, RW, 4K) valid address");
     }
 
     // 2. Read-only mapping - should be zero-filled
     let addr = mmap_anon(4096, PROT_READ);
     if is_valid_addr(addr) {
-        pass("mmap(ANON, RO, 4K) valid address");
+        cat.pass("mmap(ANON, RO, 4K) valid address");
         let val = unsafe { (addr as *const u64).read_volatile() };
         if val == 0 {
-            pass("mmap(ANON) zero-filled");
+            cat.pass("mmap(ANON) zero-filled");
         } else {
-            fail("mmap(ANON) zero-filled");
+            cat.fail("mmap(ANON) zero-filled");
         }
         unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
     } else {
-        fail("mmap(ANON, RO, 4K) valid address");
+        cat.fail("mmap(ANON, RO, 4K) valid address");
     }
 
     // 3. Multi-page mapping (64KB)
     let size = 16 * 4096u64;
     let addr = mmap_anon(size, PROT_READ | PROT_WRITE);
     if is_valid_addr(addr) {
-        pass("mmap(ANON, RW, 64K) valid address");
+        cat.pass("mmap(ANON, RW, 64K) valid address");
         unsafe {
             (addr as *mut u64).write_volatile(0xAAAA_BBBB);
             ((addr as u64 + size - 8) as *mut u64).write_volatile(0xCCCC_DDDD);
@@ -91,22 +92,22 @@ pub fn test_mmap_positive() {
         let first = unsafe { (addr as *const u64).read_volatile() };
         let last = unsafe { ((addr as u64 + size - 8) as *const u64).read_volatile() };
         if first == 0xAAAA_BBBB && last == 0xCCCC_DDDD {
-            pass("mmap 64K first/last page access");
+            cat.pass("mmap 64K first/last page access");
         } else {
-            fail("mmap 64K first/last page access");
+            cat.fail("mmap 64K first/last page access");
         }
         unsafe { syscall2(nr::MUNMAP, addr as u64, size) };
     } else {
-        fail("mmap(ANON, RW, 64K) valid address");
+        cat.fail("mmap(ANON, RW, 64K) valid address");
     }
 
     // 4. Page-aligned address returned
     let addr = mmap_anon(4096, PROT_READ | PROT_WRITE);
     if is_valid_addr(addr) {
         if addr as u64 & 0xFFF == 0 {
-            pass("mmap returns page-aligned");
+            cat.pass("mmap returns page-aligned");
         } else {
-            fail("mmap returns page-aligned");
+            cat.fail("mmap returns page-aligned");
         }
         unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
     }
@@ -127,9 +128,9 @@ pub fn test_mmap_positive() {
             }
         }
         if ok {
-            pass("mmap full page write/verify");
+            cat.pass("mmap full page write/verify");
         } else {
-            fail("mmap full page write/verify");
+            cat.fail("mmap full page write/verify");
         }
         unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
     }
@@ -139,37 +140,40 @@ pub fn test_mmap_positive() {
     let a2 = mmap_anon(4096, PROT_READ | PROT_WRITE);
     if is_valid_addr(a1) && is_valid_addr(a2) {
         if a1 != a2 {
-            pass("consecutive mmap different addrs");
+            cat.pass("consecutive mmap different addrs");
         } else {
-            fail("consecutive mmap different addrs");
+            cat.fail("consecutive mmap different addrs");
         }
         unsafe { (a1 as *mut u64).write_volatile(0x1111) };
         unsafe { (a2 as *mut u64).write_volatile(0x2222) };
         let v1 = unsafe { (a1 as *const u64).read_volatile() };
         let v2 = unsafe { (a2 as *const u64).read_volatile() };
         if v1 == 0x1111 && v2 == 0x2222 {
-            pass("consecutive mappings independent");
+            cat.pass("consecutive mappings independent");
         } else {
-            fail("consecutive mappings independent");
+            cat.fail("consecutive mappings independent");
         }
         unsafe { syscall2(nr::MUNMAP, a1 as u64, 4096) };
         unsafe { syscall2(nr::MUNMAP, a2 as u64, 4096) };
     }
+
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // MMAP: Negative Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_mmap_negative() {
-    write_str("\n=== mmap: negative tests ===\n");
+fn test_mmap_negative(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "mmap: negative tests");
+    cat.header();
 
     // 1. Zero length → EINVAL
     let ret = mmap_anon(0, PROT_READ | PROT_WRITE);
     if ret == EINVAL {
-        pass("mmap(len=0) -EINVAL");
+        cat.pass("mmap(len=0) -EINVAL");
     } else {
-        fail_errno("mmap(len=0) -EINVAL", EINVAL, ret);
+        cat.fail_errno("mmap(len=0) -EINVAL", EINVAL, ret);
     }
 
     // 2. Invalid protection flags - Linux is permissive (ignores unknown bits)
@@ -178,12 +182,12 @@ pub fn test_mmap_negative() {
     };
     // Implementation-defined: Linux accepts, strict POSIX returns EINVAL.
     if is_valid_addr(ret) {
-        pass("mmap(prot=0xFFFF) accepted (Linux-permissive)");
+        cat.pass("mmap(prot=0xFFFF) accepted (Linux-permissive)");
         unsafe { syscall2(nr::MUNMAP, ret as u64, 4096) };
     } else if ret == EINVAL {
-        pass("mmap(prot=0xFFFF) rejected -EINVAL (strict POSIX)");
+        cat.pass("mmap(prot=0xFFFF) rejected -EINVAL (strict POSIX)");
     } else {
-        fail_errno("mmap(prot=0xFFFF) unexpected error", EINVAL, ret);
+        cat.fail_errno("mmap(prot=0xFFFF) unexpected error", EINVAL, ret);
     }
 
     // 3. MAP_FIXED at address 0
@@ -202,20 +206,20 @@ pub fn test_mmap_negative() {
         )
     };
     if ret == 0 {
-        pass("mmap(MAP_FIXED, addr=0) mapped at 0");
+        cat.pass("mmap(MAP_FIXED, addr=0) mapped at 0");
         unsafe { syscall2(nr::MUNMAP, 0, 4096) };
     } else if ret == EINVAL || ret == ENOMEM {
-        pass("mmap(MAP_FIXED, addr=0) rejected with valid errno");
+        cat.pass("mmap(MAP_FIXED, addr=0) rejected with valid errno");
     } else {
-        fail_errno("mmap(MAP_FIXED, addr=0) unexpected result", EINVAL, ret);
+        cat.fail_errno("mmap(MAP_FIXED, addr=0) unexpected result", EINVAL, ret);
     }
 
     // 4. Neither SHARED nor PRIVATE — POSIX requires EINVAL
     let ret = unsafe { syscall6(nr::MMAP, 0, 4096, PROT_READ, MAP_ANONYMOUS, u64::MAX, 0) };
     if ret == EINVAL {
-        pass("mmap(no SHARED|PRIVATE) -EINVAL");
+        cat.pass("mmap(no SHARED|PRIVATE) -EINVAL");
     } else {
-        fail_errno("mmap(no SHARED|PRIVATE) -EINVAL", EINVAL, ret);
+        cat.fail_errno("mmap(no SHARED|PRIVATE) -EINVAL", EINVAL, ret);
         if is_valid_addr(ret) {
             unsafe { syscall2(nr::MUNMAP, ret as u64, 4096) };
         }
@@ -234,89 +238,95 @@ pub fn test_mmap_negative() {
         )
     };
     if ret == EINVAL {
-        pass("mmap(SHARED|PRIVATE) -EINVAL");
+        cat.pass("mmap(SHARED|PRIVATE) -EINVAL");
     } else {
-        fail_errno("mmap(SHARED|PRIVATE) -EINVAL", EINVAL, ret);
+        cat.fail_errno("mmap(SHARED|PRIVATE) -EINVAL", EINVAL, ret);
         if is_valid_addr(ret) {
             unsafe { syscall2(nr::MUNMAP, ret as u64, 4096) };
         }
     }
+
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // MMAP: Boundary Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_mmap_boundary() {
-    write_str("\n=== mmap: boundary tests ===\n");
+fn test_mmap_boundary(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "mmap: boundary tests");
+    cat.header();
 
     // 1. Minimum size (1 byte) → rounds up to page
     let ret = mmap_anon(1, PROT_READ | PROT_WRITE);
     if is_valid_addr(ret) {
-        pass("mmap(len=1) succeeds");
+        cat.pass("mmap(len=1) succeeds");
         unsafe { ((ret as u64 + 4095) as *mut u8).write_volatile(0x42) };
         let val = unsafe { ((ret as u64 + 4095) as *const u8).read_volatile() };
         if val == 0x42 {
-            pass("mmap(len=1) provides full page");
+            cat.pass("mmap(len=1) provides full page");
         } else {
-            fail("mmap(len=1) provides full page");
+            cat.fail("mmap(len=1) provides full page");
         }
         unsafe { syscall2(nr::MUNMAP, ret as u64, 4096) };
     } else {
-        fail("mmap(len=1) succeeds");
+        cat.fail("mmap(len=1) succeeds");
     }
 
     // 2. Non-page-aligned size - verify we can access within requested range
     let ret = mmap_anon(5000, PROT_READ | PROT_WRITE);
     if is_valid_addr(ret) {
-        pass("mmap(len=5000) succeeds");
+        cat.pass("mmap(len=5000) succeeds");
         // Access last valid byte within requested size (offset 4999)
         unsafe { ((ret as u64 + 4999) as *mut u8).write_volatile(0x55) };
         let val = unsafe { ((ret as u64 + 4999) as *const u8).read_volatile() };
         if val == 0x55 {
-            pass("mmap(len=5000) last byte accessible");
+            cat.pass("mmap(len=5000) last byte accessible");
         } else {
-            fail("mmap(len=5000) last byte accessible");
+            cat.fail("mmap(len=5000) last byte accessible");
         }
         unsafe { syscall2(nr::MUNMAP, ret as u64, 5000) };
     } else {
-        fail("mmap(len=5000) succeeds");
+        cat.fail("mmap(len=5000) succeeds");
     }
 
     // 3. Large allocation (1MB)
     let size = 1024 * 1024u64;
     let ret = mmap_anon(size, PROT_READ | PROT_WRITE);
     if is_valid_addr(ret) {
-        pass("mmap(len=1MB) succeeds");
+        cat.pass("mmap(len=1MB) succeeds");
         let mid = ret as u64 + size / 2;
         unsafe { (mid as *mut u64).write_volatile(0xBAD_C0FFEE) };
         let val = unsafe { (mid as *const u64).read_volatile() };
         if val == 0xBAD_C0FFEE {
-            pass("mmap 1MB middle access");
+            cat.pass("mmap 1MB middle access");
         } else {
-            fail("mmap 1MB middle access");
+            cat.fail("mmap 1MB middle access");
         }
         unsafe { syscall2(nr::MUNMAP, ret as u64, size) };
     } else {
-        fail("mmap(len=1MB) succeeds");
+        cat.fail("mmap(len=1MB) succeeds");
     }
+
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // MUNMAP: Comprehensive Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_munmap_comprehensive() {
-    write_str("\n=== munmap: comprehensive tests ===\n");
+fn test_munmap_comprehensive(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "munmap: comprehensive tests");
+    cat.header();
 
     // 1. Basic unmap
     let addr = mmap_anon(4096, PROT_READ | PROT_WRITE);
     if is_valid_addr(addr) {
         let ret = unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
         if ret == 0 {
-            pass("munmap basic returns 0");
+            cat.pass("munmap basic returns 0");
         } else {
-            fail_errno("munmap basic returns 0", 0, ret);
+            cat.fail_errno("munmap basic returns 0", 0, ret);
         }
     }
 
@@ -325,9 +335,9 @@ pub fn test_munmap_comprehensive() {
     if is_valid_addr(addr) {
         let ret = unsafe { syscall2(nr::MUNMAP, addr as u64, 0) };
         if ret == EINVAL {
-            pass("munmap(len=0) -EINVAL");
+            cat.pass("munmap(len=0) -EINVAL");
         } else {
-            fail_errno("munmap(len=0) -EINVAL", EINVAL, ret);
+            cat.fail_errno("munmap(len=0) -EINVAL", EINVAL, ret);
         }
         unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
     }
@@ -340,16 +350,16 @@ pub fn test_munmap_comprehensive() {
         }
         let ret = unsafe { syscall2(nr::MUNMAP, addr as u64 + 4096, 4096 * 2) };
         if ret == 0 {
-            pass("munmap partial (middle) returns 0");
+            cat.pass("munmap partial (middle) returns 0");
         } else {
-            fail("munmap partial (middle) returns 0");
+            cat.fail("munmap partial (middle) returns 0");
         }
         let v0 = unsafe { (addr as *const u64).read_volatile() };
         let v3 = unsafe { ((addr as u64 + 3 * 4096) as *const u64).read_volatile() };
         if v0 == 0x1000 && v3 == 0x1003 {
-            pass("munmap partial preserves edges");
+            cat.pass("munmap partial preserves edges");
         } else {
-            fail("munmap partial preserves edges");
+            cat.fail("munmap partial preserves edges");
         }
         unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
         unsafe { syscall2(nr::MUNMAP, addr as u64 + 3 * 4096, 4096) };
@@ -361,27 +371,31 @@ pub fn test_munmap_comprehensive() {
         let ret1 = unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
         let _ret2 = unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
         if ret1 == 0 {
-            pass("munmap first returns 0");
+            cat.pass("munmap first returns 0");
         }
-        pass("double munmap no crash");
+        cat.pass("double munmap no crash");
     }
 
     // 5. Unmap non-existent region - must not crash
     let _ret = unsafe { syscall2(nr::MUNMAP, 0x7FFF_0000_0000u64, 4096) };
-    pass("munmap nonexistent no crash");
+    cat.pass("munmap nonexistent no crash");
+
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // MPROTECT: Comprehensive Tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_mprotect_comprehensive() {
-    write_str("\n=== mprotect: comprehensive tests ===\n");
+fn test_mprotect_comprehensive(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "mprotect: comprehensive tests");
+    cat.header();
 
     // 1. RW → RO → RW cycle
     let addr = mmap_anon(4096, PROT_READ | PROT_WRITE);
     if !is_valid_addr(addr) {
-        fail("mprotect test setup");
+        cat.fail("mprotect test setup");
+        results.add(cat);
         return;
     }
 
@@ -389,31 +403,31 @@ pub fn test_mprotect_comprehensive() {
 
     let ret = unsafe { syscall3(nr::MPROTECT, addr as u64, 4096, PROT_READ) };
     if ret == 0 {
-        pass("mprotect RW→RO returns 0");
+        cat.pass("mprotect RW→RO returns 0");
     } else {
-        fail_errno("mprotect RW→RO returns 0", 0, ret);
+        cat.fail_errno("mprotect RW→RO returns 0", 0, ret);
     }
 
     let val = unsafe { (addr as *const u64).read_volatile() };
     if val == 0xABCD_EF01 {
-        pass("read after mprotect(RO)");
+        cat.pass("read after mprotect(RO)");
     } else {
-        fail("read after mprotect(RO)");
+        cat.fail("read after mprotect(RO)");
     }
 
     let ret = unsafe { syscall3(nr::MPROTECT, addr as u64, 4096, PROT_READ | PROT_WRITE) };
     if ret == 0 {
-        pass("mprotect RO→RW returns 0");
+        cat.pass("mprotect RO→RW returns 0");
     } else {
-        fail("mprotect RO→RW returns 0");
+        cat.fail("mprotect RO→RW returns 0");
     }
 
     unsafe { (addr as *mut u64).write_volatile(0x1234_5678) };
     let val = unsafe { (addr as *const u64).read_volatile() };
     if val == 0x1234_5678 {
-        pass("write after mprotect(RW)");
+        cat.pass("write after mprotect(RW)");
     } else {
-        fail("write after mprotect(RW)");
+        cat.fail("write after mprotect(RW)");
     }
     unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
 
@@ -422,9 +436,9 @@ pub fn test_mprotect_comprehensive() {
     if is_valid_addr(addr) {
         let ret = unsafe { syscall3(nr::MPROTECT, addr as u64, 4096, PROT_NONE) };
         if ret == 0 {
-            pass("mprotect(PROT_NONE) returns 0");
+            cat.pass("mprotect(PROT_NONE) returns 0");
         } else {
-            fail("mprotect(PROT_NONE) returns 0");
+            cat.fail("mprotect(PROT_NONE) returns 0");
         }
         unsafe { syscall3(nr::MPROTECT, addr as u64, 4096, PROT_READ | PROT_WRITE) };
         unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
@@ -436,11 +450,11 @@ pub fn test_mprotect_comprehensive() {
         let ret = unsafe { syscall3(nr::MPROTECT, addr as u64, 0, PROT_READ) };
         // Implementation-defined: Linux returns 0, strict POSIX may return EINVAL.
         if ret == 0 {
-            pass("mprotect(len=0) accepted (no-op)");
+            cat.pass("mprotect(len=0) accepted (no-op)");
         } else if ret == EINVAL {
-            pass("mprotect(len=0) rejected -EINVAL (strict)");
+            cat.pass("mprotect(len=0) rejected -EINVAL (strict)");
         } else {
-            fail_errno("mprotect(len=0) unexpected error", EINVAL, ret);
+            cat.fail_errno("mprotect(len=0) unexpected error", EINVAL, ret);
         }
         unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
     }
@@ -448,9 +462,9 @@ pub fn test_mprotect_comprehensive() {
     // 4. Unmapped region — POSIX requires ENOMEM
     let ret = unsafe { syscall3(nr::MPROTECT, 0x7FFF_0000_0000u64, 4096, PROT_READ) };
     if ret == ENOMEM {
-        pass("mprotect unmapped -ENOMEM");
+        cat.pass("mprotect unmapped -ENOMEM");
     } else {
-        fail_errno("mprotect unmapped -ENOMEM", ENOMEM, ret);
+        cat.fail_errno("mprotect unmapped -ENOMEM", ENOMEM, ret);
     }
 
     // 5. Partial region protection
@@ -461,18 +475,18 @@ pub fn test_mprotect_comprehensive() {
         }
         let ret = unsafe { syscall3(nr::MPROTECT, addr as u64 + 4096, 4096 * 2, PROT_READ) };
         if ret == 0 {
-            pass("mprotect partial returns 0");
+            cat.pass("mprotect partial returns 0");
         } else {
-            fail("mprotect partial returns 0");
+            cat.fail("mprotect partial returns 0");
         }
         unsafe { (addr as *mut u64).write_volatile(0xAAAA) };
         unsafe { ((addr as u64 + 3 * 4096) as *mut u64).write_volatile(0xBBBB) };
         let v0 = unsafe { (addr as *const u64).read_volatile() };
         let v3 = unsafe { ((addr as u64 + 3 * 4096) as *const u64).read_volatile() };
         if v0 == 0xAAAA && v3 == 0xBBBB {
-            pass("mprotect partial edges writable");
+            cat.pass("mprotect partial edges writable");
         } else {
-            fail("mprotect partial edges writable");
+            cat.fail("mprotect partial edges writable");
         }
         unsafe { syscall2(nr::MUNMAP, addr as u64, 4096 * 4) };
     }
@@ -482,28 +496,32 @@ pub fn test_mprotect_comprehensive() {
     if is_valid_addr(addr) {
         let ret = unsafe { syscall3(nr::MPROTECT, addr as u64, 4096, 0xFF) };
         if ret == EINVAL {
-            pass("mprotect(prot=0xFF) -EINVAL");
+            cat.pass("mprotect(prot=0xFF) -EINVAL");
         } else if ret == 0 {
             // Linux is permissive with unknown prot bits
-            pass("mprotect(prot=0xFF) accepted (Linux-permissive)");
+            cat.pass("mprotect(prot=0xFF) accepted (Linux-permissive)");
         } else {
-            fail_errno("mprotect(prot=0xFF) unexpected error", EINVAL, ret);
+            cat.fail_errno("mprotect(prot=0xFF) unexpected error", EINVAL, ret);
         }
         unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
     }
+
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // MMAP: Reuse after munmap
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_mmap_reuse() {
-    write_str("\n=== mmap: reuse after munmap ===\n");
+fn test_mmap_reuse(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "mmap: reuse after munmap");
+    cat.header();
 
     // 1. New mapping should be zero-filled
     let addr1 = mmap_anon(4096, PROT_READ | PROT_WRITE);
     if !is_valid_addr(addr1) {
-        fail("mmap reuse setup");
+        cat.fail("mmap reuse setup");
+        results.add(cat);
         return;
     }
     unsafe { (addr1 as *mut u64).write_volatile(0xAAAA_AAAA) };
@@ -511,18 +529,18 @@ pub fn test_mmap_reuse() {
 
     let addr2 = mmap_anon(4096, PROT_READ | PROT_WRITE);
     if is_valid_addr(addr2) {
-        pass("mmap after munmap succeeds");
+        cat.pass("mmap after munmap succeeds");
         let val = unsafe { (addr2 as *const u64).read_volatile() };
         if val == 0 {
-            pass("remapped zero-filled");
+            cat.pass("remapped zero-filled");
         } else if val == 0xAAAA_AAAA {
-            fail("remapped has stale data!");
+            cat.fail("remapped has stale data!");
         } else {
-            pass("remapped zero-filled");
+            cat.pass("remapped zero-filled");
         }
         unsafe { syscall2(nr::MUNMAP, addr2 as u64, 4096) };
     } else {
-        fail("mmap after munmap succeeds");
+        cat.fail("mmap after munmap succeeds");
     }
 
     // 2. Stress test: map/unmap cycle
@@ -541,18 +559,21 @@ pub fn test_mmap_reuse() {
         unsafe { syscall2(nr::MUNMAP, addr as u64, 4096) };
     }
     if ok {
-        pass("mmap/munmap cycle 10x");
+        cat.pass("mmap/munmap cycle 10x");
     } else {
-        fail("mmap/munmap cycle 10x");
+        cat.fail("mmap/munmap cycle 10x");
     }
+
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // mlock / munlock — lock pages into memory
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_mlock() {
-    write_str("\n=== Memory: mlock/munlock ===\n");
+fn test_mlock(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Memory: mlock/munlock");
+    cat.header();
 
     // mmap a page
     let addr = unsafe {
@@ -563,49 +584,52 @@ fn test_mlock() {
         )
     };
     if addr < 0 {
-        fail_errno("mlock: mmap", 0, addr);
+        cat.fail_errno("mlock: mmap", 0, addr);
+        results.add(cat);
         return;
     }
 
     // mlock
     let ret = unsafe { crate::syscall2(nr::MLOCK, addr as u64, 4096) };
     if ret == 0 {
-        pass("mlock returns 0");
+        cat.pass("mlock returns 0");
     } else if ret == -12 || ret == -1 { // ENOMEM or EPERM
-        pass("mlock denied (resource limit or no privilege)");
+        cat.pass("mlock denied (resource limit or no privilege)");
     } else {
-        fail_errno("mlock returns 0 or expected error", 0, ret);
+        cat.fail_errno("mlock returns 0 or expected error", 0, ret);
     }
 
     // munlock
     let ret = unsafe { crate::syscall2(nr::MUNLOCK, addr as u64, 4096) };
     if ret == 0 {
-        pass("munlock returns 0");
+        cat.pass("munlock returns 0");
     } else if ret == -1 { // EPERM
-        pass("munlock denied (no privilege)");
+        cat.pass("munlock denied (no privilege)");
     } else {
-        fail_errno("munlock returns 0", 0, ret);
+        cat.fail_errno("munlock returns 0", 0, ret);
     }
 
     // munlock on unmapped region → ENOMEM
     unsafe { crate::syscall2(nr::MUNMAP, addr as u64, 4096) };
     let ret = unsafe { crate::syscall2(nr::MUNLOCK, addr as u64, 4096) };
     if ret == -12 { // ENOMEM
-        pass("munlock unmapped region returns ENOMEM");
+        cat.pass("munlock unmapped region returns ENOMEM");
     } else if ret == 0 {
-        pass("munlock unmapped region accepted (implementation-defined)");
+        cat.pass("munlock unmapped region accepted (implementation-defined)");
     } else {
-        fail_errno("munlock unmapped region", -12, ret);
+        cat.fail_errno("munlock unmapped region", -12, ret);
     }
+
+    results.add(cat);
 }
 
 /// Run all memory management tests
-pub fn run_all() {
-    test_mmap_positive();
-    test_mmap_negative();
-    test_mmap_boundary();
-    test_munmap_comprehensive();
-    test_mprotect_comprehensive();
-    test_mmap_reuse();
-    test_mlock();
+pub fn run_all(results: &mut crate::Results) {
+    test_mmap_positive(results);
+    test_mmap_negative(results);
+    test_mmap_boundary(results);
+    test_munmap_comprehensive(results);
+    test_mprotect_comprehensive(results);
+    test_mmap_reuse(results);
+    test_mlock(results);
 }

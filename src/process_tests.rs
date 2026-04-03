@@ -10,7 +10,8 @@
 //! - Boundary: edge cases for resource limits
 
 use crate::nr;
-use crate::{pass, fail, fail_errno, write_str, syscall0, syscall1, syscall2, syscall3, syscall4};
+use crate::{syscall0, syscall1, syscall2, syscall3, syscall4};
+use crate::{PseLevel, TestCategory};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constants
@@ -49,146 +50,146 @@ struct Rlimit {
 // Process/Thread identity tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_getpid() {
-    write_str("\n=== Process: getpid ===\n");
+pub fn test_getpid(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. getpid returns positive value
     let pid = unsafe { syscall0(nr::GETPID) };
     if pid > 0 {
-        pass("getpid: returns positive value");
+        cat.pass("getpid: returns positive value");
     } else {
-        fail_errno("getpid: returns positive value", 1, pid);
+        cat.fail_errno("getpid: returns positive value", 1, pid);
     }
 
     // 2. getpid is consistent (multiple calls return same value)
     let pid2 = unsafe { syscall0(nr::GETPID) };
     if pid == pid2 {
-        pass("getpid: consistent across calls");
+        cat.pass("getpid: consistent across calls");
     } else {
-        fail("getpid: consistent across calls");
+        cat.fail("getpid: consistent across calls");
     }
 
     // 3. getpid is in reasonable range
     if pid > 0 && pid < 0x7FFFFFFF {
-        pass("getpid: value in valid range");
+        cat.pass("getpid: value in valid range");
     } else {
-        fail("getpid: value in valid range");
+        cat.fail("getpid: value in valid range");
     }
 }
 
-pub fn test_gettid() {
-    write_str("\n=== Process: gettid ===\n");
+pub fn test_gettid(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. gettid returns positive value
     let tid = unsafe { syscall0(nr::GETTID) };
     if tid > 0 {
-        pass("gettid: returns positive value");
+        cat.pass("gettid: returns positive value");
     } else {
-        fail_errno("gettid: returns positive value", 1, tid);
+        cat.fail_errno("gettid: returns positive value", 1, tid);
     }
 
     // 2. For single-threaded process, tid == pid
     let pid = unsafe { syscall0(nr::GETPID) };
     if tid == pid {
-        pass("gettid: equals getpid (single-threaded)");
+        cat.pass("gettid: equals getpid (single-threaded)");
     } else {
-        fail("gettid: equals getpid (single-threaded)");
+        cat.fail("gettid: equals getpid (single-threaded)");
     }
 
     // 3. gettid is consistent
     let tid2 = unsafe { syscall0(nr::GETTID) };
     if tid == tid2 {
-        pass("gettid: consistent across calls");
+        cat.pass("gettid: consistent across calls");
     } else {
-        fail("gettid: consistent across calls");
+        cat.fail("gettid: consistent across calls");
     }
 }
 
-pub fn test_getppid() {
-    write_str("\n=== Process: getppid ===\n");
+pub fn test_getppid(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. getppid returns value >= 0
     let ppid = unsafe { syscall0(nr::GETPPID) };
     if ppid >= 0 {
-        pass("getppid: returns non-negative value");
+        cat.pass("getppid: returns non-negative value");
     } else {
-        fail_errno("getppid: returns non-negative value", 0, ppid);
+        cat.fail_errno("getppid: returns non-negative value", 0, ppid);
     }
 
     // 2. getppid != getpid (parent is different from self)
     let pid = unsafe { syscall0(nr::GETPID) };
     if ppid != pid || ppid == 1 {
         // ppid == pid only if we're init (ppid=1) and very special case
-        pass("getppid: different from getpid (or we're init)");
+        cat.pass("getppid: different from getpid (or we're init)");
     } else {
-        fail("getppid: different from getpid");
+        cat.fail("getppid: different from getpid");
     }
 
     // 3. getppid is consistent
     let ppid2 = unsafe { syscall0(nr::GETPPID) };
     if ppid == ppid2 {
-        pass("getppid: consistent across calls");
+        cat.pass("getppid: consistent across calls");
     } else {
-        fail("getppid: consistent across calls");
+        cat.fail("getppid: consistent across calls");
     }
 }
 
-pub fn test_uid_gid() {
-    write_str("\n=== Process: uid/gid ===\n");
+pub fn test_uid_gid(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. getuid
     let uid = unsafe { syscall0(nr::GETUID) };
     if uid >= 0 {
-        pass("getuid: returns non-negative value");
+        cat.pass("getuid: returns non-negative value");
     } else {
-        fail("getuid: returns non-negative value");
+        cat.fail("getuid: returns non-negative value");
     }
 
     // 2. geteuid
     let euid = unsafe { syscall0(nr::GETEUID) };
     if euid >= 0 {
-        pass("geteuid: returns non-negative value");
+        cat.pass("geteuid: returns non-negative value");
     } else {
-        fail("geteuid: returns non-negative value");
+        cat.fail("geteuid: returns non-negative value");
     }
 
     // 3. getgid
     let gid = unsafe { syscall0(nr::GETGID) };
     if gid >= 0 {
-        pass("getgid: returns non-negative value");
+        cat.pass("getgid: returns non-negative value");
     } else {
-        fail("getgid: returns non-negative value");
+        cat.fail("getgid: returns non-negative value");
     }
 
     // 4. getegid
     let egid = unsafe { syscall0(nr::GETEGID) };
     if egid >= 0 {
-        pass("getegid: returns non-negative value");
+        cat.pass("getegid: returns non-negative value");
     } else {
-        fail("getegid: returns non-negative value");
+        cat.fail("getegid: returns non-negative value");
     }
 
     // 5. For non-setuid binary, uid == euid
     if uid == euid {
-        pass("uid equals euid (non-setuid)");
+        cat.pass("uid equals euid (non-setuid)");
     } else {
-        pass("uid differs from euid (setuid binary)");
+        cat.pass("uid differs from euid (setuid binary)");
     }
 
     // 6. For non-setgid binary, gid == egid
     if gid == egid {
-        pass("gid equals egid (non-setgid)");
+        cat.pass("gid equals egid (non-setgid)");
     } else {
-        pass("gid differs from egid (setgid binary)");
+        cat.pass("gid differs from egid (setgid binary)");
     }
 
     // 7. Values are consistent
     let uid2 = unsafe { syscall0(nr::GETUID) };
     let gid2 = unsafe { syscall0(nr::GETGID) };
     if uid == uid2 && gid == gid2 {
-        pass("uid/gid: consistent across calls");
+        cat.pass("uid/gid: consistent across calls");
     } else {
-        fail("uid/gid: consistent across calls");
+        cat.fail("uid/gid: consistent across calls");
     }
 }
 
@@ -196,22 +197,22 @@ pub fn test_uid_gid() {
 // Working directory tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_getcwd() {
-    write_str("\n=== Process: getcwd ===\n");
+pub fn test_getcwd(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. getcwd with sufficient buffer
     let mut buf = [0u8; 256];
     let ret = unsafe { syscall2(nr::GETCWD, buf.as_mut_ptr() as u64, 256) };
     if ret > 0 {
-        pass("getcwd: returns path length");
+        cat.pass("getcwd: returns path length");
         // Path should start with /
         if buf[0] == b'/' {
-            pass("getcwd: path starts with /");
+            cat.pass("getcwd: path starts with /");
         } else {
-            fail("getcwd: path starts with /");
+            cat.fail("getcwd: path starts with /");
         }
     } else {
-        fail_errno("getcwd: returns path length", 1, ret);
+        cat.fail_errno("getcwd: returns path length", 1, ret);
     }
 
     // 2. getcwd with exact buffer size
@@ -221,9 +222,9 @@ pub fn test_getcwd() {
         let mut exact_buf = [0u8; 256];
         let ret2 = unsafe { syscall2(nr::GETCWD, exact_buf.as_mut_ptr() as u64, len as u64) };
         if ret2 > 0 {
-            pass("getcwd: exact buffer size works");
+            cat.pass("getcwd: exact buffer size works");
         } else {
-            fail("getcwd: exact buffer size works");
+            cat.fail("getcwd: exact buffer size works");
         }
     }
 
@@ -231,31 +232,31 @@ pub fn test_getcwd() {
     let mut small_buf = [0u8; 2];
     let ret = unsafe { syscall2(nr::GETCWD, small_buf.as_mut_ptr() as u64, 2) };
     if ret == ERANGE {
-        pass("getcwd: small buffer returns ERANGE");
+        cat.pass("getcwd: small buffer returns ERANGE");
     } else if ret > 0 && ret <= 2 {
         // Path is very short (e.g., "/")
-        pass("getcwd: very short path fits in small buffer");
+        cat.pass("getcwd: very short path fits in small buffer");
     } else {
-        fail_errno("getcwd: small buffer returns ERANGE", ERANGE, ret);
+        cat.fail_errno("getcwd: small buffer returns ERANGE", ERANGE, ret);
     }
 
     // 4. getcwd with size=0
     let ret = unsafe { syscall2(nr::GETCWD, buf.as_mut_ptr() as u64, 0) };
     if ret == EINVAL || ret == ERANGE {
-        pass("getcwd: size=0 returns error");
+        cat.pass("getcwd: size=0 returns error");
     } else {
-        fail_errno("getcwd: size=0 returns error", EINVAL, ret);
+        cat.fail_errno("getcwd: size=0 returns error", EINVAL, ret);
     }
 }
 
-pub fn test_chdir() {
-    write_str("\n=== Process: chdir ===\n");
+pub fn test_chdir(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. Get current directory (getcwd returns null-terminated string)
     let mut orig_cwd = [0u8; 256];
     let orig_len = unsafe { syscall2(nr::GETCWD, orig_cwd.as_mut_ptr() as u64, 256) };
     if orig_len <= 0 {
-        fail("chdir: get original cwd");
+        cat.fail("chdir: get original cwd");
         return;
     }
 
@@ -263,36 +264,36 @@ pub fn test_chdir() {
     let root = b"/\0";
     let ret = unsafe { syscall1(nr::CHDIR, root.as_ptr() as u64) };
     if ret == 0 {
-        pass("chdir: to root (/)");
+        cat.pass("chdir: to root (/)");
     } else {
-        fail_errno("chdir: to root (/)", 0, ret);
+        cat.fail_errno("chdir: to root (/)", 0, ret);
     }
 
     // 3. Verify we're at root
     let mut new_cwd = [0u8; 256];
     let new_len = unsafe { syscall2(nr::GETCWD, new_cwd.as_mut_ptr() as u64, 256) };
     if new_len > 0 && new_cwd[0] == b'/' && (new_len == 2 || new_cwd[1] == 0) {
-        pass("chdir: verified at root");
+        cat.pass("chdir: verified at root");
     } else {
-        pass("chdir: cwd changed");
+        cat.pass("chdir: cwd changed");
     }
 
     // 4. chdir to non-existent directory
     let nonexistent = b"/this_directory_does_not_exist_12345\0";
     let ret = unsafe { syscall1(nr::CHDIR, nonexistent.as_ptr() as u64) };
     if ret == ENOENT {
-        pass("chdir: non-existent returns ENOENT");
+        cat.pass("chdir: non-existent returns ENOENT");
     } else {
-        fail_errno("chdir: non-existent returns ENOENT", ENOENT, ret);
+        cat.fail_errno("chdir: non-existent returns ENOENT", ENOENT, ret);
     }
 
     // 5. Restore original directory (orig_cwd is null-terminated from getcwd)
     let ret = unsafe { syscall1(nr::CHDIR, orig_cwd.as_ptr() as u64) };
     if ret == 0 {
-        pass("chdir: restored original cwd");
+        cat.pass("chdir: restored original cwd");
     } else {
         // May fail if directory was deleted or permissions changed
-        fail_errno("chdir: restored original cwd", 0, ret);
+        cat.fail_errno("chdir: restored original cwd", 0, ret);
     }
 }
 
@@ -300,26 +301,26 @@ pub fn test_chdir() {
 // Scheduler tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_sched_yield() {
-    write_str("\n=== Process: sched_yield ===\n");
+pub fn test_sched_yield(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. sched_yield always succeeds
     let ret = unsafe { syscall0(nr::SCHED_YIELD) };
     if ret == 0 {
-        pass("sched_yield: returns 0");
+        cat.pass("sched_yield: returns 0");
     } else {
-        fail_errno("sched_yield: returns 0", 0, ret);
+        cat.fail_errno("sched_yield: returns 0", 0, ret);
     }
 
     // 2. Multiple yields
     for _ in 0..10 {
         unsafe { syscall0(nr::SCHED_YIELD) };
     }
-    pass("sched_yield: multiple calls succeed");
+    cat.pass("sched_yield: multiple calls succeed");
 }
 
-pub fn test_sched_getaffinity() {
-    write_str("\n=== Process: sched_getaffinity ===\n");
+pub fn test_sched_getaffinity(cat: &mut TestCategory) {
+    cat.header();
 
     let pid = unsafe { syscall0(nr::GETPID) };
 
@@ -329,12 +330,12 @@ pub fn test_sched_getaffinity() {
         syscall3(nr::SCHED_GETAFFINITY, pid as u64, 128, mask.as_mut_ptr() as u64)
     };
     if ret > 0 {
-        pass("sched_getaffinity: returns mask size");
+        cat.pass("sched_getaffinity: returns mask size");
     } else if ret == 0 {
         // Some implementations return 0 on success
-        pass("sched_getaffinity: returns 0 (empty mask or special case)");
+        cat.pass("sched_getaffinity: returns 0 (empty mask or special case)");
     } else {
-        fail_errno("sched_getaffinity: returns mask size", 0, ret);
+        cat.fail_errno("sched_getaffinity: returns mask size", 0, ret);
     }
 
     // 2. At least one CPU should be set
@@ -346,9 +347,9 @@ pub fn test_sched_getaffinity() {
         }
     }
     if any_set || ret == 0 {
-        pass("sched_getaffinity: at least one CPU in mask");
+        cat.pass("sched_getaffinity: at least one CPU in mask");
     } else {
-        fail("sched_getaffinity: at least one CPU in mask");
+        cat.fail("sched_getaffinity: at least one CPU in mask");
     }
 
     // 3. Get affinity with pid=0 (current process)
@@ -356,9 +357,9 @@ pub fn test_sched_getaffinity() {
         syscall3(nr::SCHED_GETAFFINITY, 0, 128, mask.as_mut_ptr() as u64)
     };
     if ret >= 0 {
-        pass("sched_getaffinity: pid=0 (current process)");
+        cat.pass("sched_getaffinity: pid=0 (current process)");
     } else {
-        fail_errno("sched_getaffinity: pid=0 (current process)", 0, ret);
+        cat.fail_errno("sched_getaffinity: pid=0 (current process)", 0, ret);
     }
 
     // 4. Invalid PID
@@ -366,9 +367,9 @@ pub fn test_sched_getaffinity() {
         syscall3(nr::SCHED_GETAFFINITY, 0x7FFFFFFF, 128, mask.as_mut_ptr() as u64)
     };
     if ret == ESRCH {
-        pass("sched_getaffinity: invalid PID returns ESRCH");
+        cat.pass("sched_getaffinity: invalid PID returns ESRCH");
     } else {
-        fail_errno("sched_getaffinity: invalid PID returns ESRCH", ESRCH, ret);
+        cat.fail_errno("sched_getaffinity: invalid PID returns ESRCH", ESRCH, ret);
     }
 
     // 5. Buffer too small
@@ -378,9 +379,9 @@ pub fn test_sched_getaffinity() {
     };
     // Should return EINVAL if mask is too small for number of CPUs
     if ret > 0 || ret == EINVAL {
-        pass("sched_getaffinity: small buffer handled");
+        cat.pass("sched_getaffinity: small buffer handled");
     } else {
-        fail_errno("sched_getaffinity: small buffer handled", 0, ret);
+        cat.fail_errno("sched_getaffinity: small buffer handled", 0, ret);
     }
 }
 
@@ -388,8 +389,8 @@ pub fn test_sched_getaffinity() {
 // Resource limits tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_prlimit64() {
-    write_str("\n=== Process: prlimit64 ===\n");
+pub fn test_prlimit64(cat: &mut TestCategory) {
+    cat.header();
 
     // 1. Get RLIMIT_NOFILE (number of open files)
     let mut old_limit = Rlimit { rlim_cur: 0, rlim_max: 0 };
@@ -397,17 +398,17 @@ pub fn test_prlimit64() {
         syscall4(nr::PRLIMIT64, 0, RLIMIT_NOFILE, 0, &mut old_limit as *mut _ as u64)
     };
     if ret == 0 {
-        pass("prlimit64: get RLIMIT_NOFILE");
+        cat.pass("prlimit64: get RLIMIT_NOFILE");
         if old_limit.rlim_cur > 0 && old_limit.rlim_cur <= old_limit.rlim_max {
-            pass("prlimit64: NOFILE soft <= hard limit");
+            cat.pass("prlimit64: NOFILE soft <= hard limit");
         } else if old_limit.rlim_max == u64::MAX {
             // Unlimited
-            pass("prlimit64: NOFILE unlimited");
+            cat.pass("prlimit64: NOFILE unlimited");
         } else {
-            fail("prlimit64: NOFILE soft <= hard limit");
+            cat.fail("prlimit64: NOFILE soft <= hard limit");
         }
     } else {
-        fail_errno("prlimit64: get RLIMIT_NOFILE", 0, ret);
+        cat.fail_errno("prlimit64: get RLIMIT_NOFILE", 0, ret);
     }
 
     // 2. Get RLIMIT_STACK
@@ -416,9 +417,9 @@ pub fn test_prlimit64() {
         syscall4(nr::PRLIMIT64, 0, RLIMIT_STACK, 0, &mut stack_limit as *mut _ as u64)
     };
     if ret == 0 {
-        pass("prlimit64: get RLIMIT_STACK");
+        cat.pass("prlimit64: get RLIMIT_STACK");
     } else {
-        fail_errno("prlimit64: get RLIMIT_STACK", 0, ret);
+        cat.fail_errno("prlimit64: get RLIMIT_STACK", 0, ret);
     }
 
     // 3. Get RLIMIT_AS (address space)
@@ -427,9 +428,9 @@ pub fn test_prlimit64() {
         syscall4(nr::PRLIMIT64, 0, RLIMIT_AS, 0, &mut as_limit as *mut _ as u64)
     };
     if ret == 0 {
-        pass("prlimit64: get RLIMIT_AS");
+        cat.pass("prlimit64: get RLIMIT_AS");
     } else {
-        fail_errno("prlimit64: get RLIMIT_AS", 0, ret);
+        cat.fail_errno("prlimit64: get RLIMIT_AS", 0, ret);
     }
 
     // 4. Get various other limits
@@ -449,11 +450,11 @@ pub fn test_prlimit64() {
             syscall4(nr::PRLIMIT64, 0, *resource, 0, &mut limit as *mut _ as u64)
         };
         if ret != 0 {
-            fail("prlimit64: get resource limit");
+            cat.fail("prlimit64: get resource limit");
             return;
         }
     }
-    pass("prlimit64: get multiple resource limits");
+    cat.pass("prlimit64: get multiple resource limits");
 
     // 5. Invalid resource
     let mut limit = Rlimit { rlim_cur: 0, rlim_max: 0 };
@@ -461,9 +462,9 @@ pub fn test_prlimit64() {
         syscall4(nr::PRLIMIT64, 0, 999, 0, &mut limit as *mut _ as u64)
     };
     if ret == EINVAL {
-        pass("prlimit64: invalid resource returns EINVAL");
+        cat.pass("prlimit64: invalid resource returns EINVAL");
     } else {
-        fail_errno("prlimit64: invalid resource returns EINVAL", EINVAL, ret);
+        cat.fail_errno("prlimit64: invalid resource returns EINVAL", EINVAL, ret);
     }
 
     // 6. Invalid PID
@@ -471,9 +472,9 @@ pub fn test_prlimit64() {
         syscall4(nr::PRLIMIT64, 0x7FFFFFFF, RLIMIT_NOFILE, 0, &mut limit as *mut _ as u64)
     };
     if ret == ESRCH {
-        pass("prlimit64: invalid PID returns ESRCH");
+        cat.pass("prlimit64: invalid PID returns ESRCH");
     } else {
-        fail_errno("prlimit64: invalid PID returns ESRCH", ESRCH, ret);
+        cat.fail_errno("prlimit64: invalid PID returns ESRCH", ESRCH, ret);
     }
 
     // 7. Set and restore a limit (RLIMIT_CORE is safe to modify)
@@ -487,13 +488,13 @@ pub fn test_prlimit64() {
                  &mut limit as *mut _ as u64)
     };
     if ret == 0 {
-        pass("prlimit64: set RLIMIT_CORE");
+        cat.pass("prlimit64: set RLIMIT_CORE");
         // Restore
         unsafe {
             syscall4(nr::PRLIMIT64, 0, RLIMIT_CORE, &saved_limit as *const _ as u64, 0)
         };
     } else {
-        fail_errno("prlimit64: set RLIMIT_CORE", 0, ret);
+        cat.fail_errno("prlimit64: set RLIMIT_CORE", 0, ret);
     }
 }
 
@@ -501,38 +502,66 @@ pub fn test_prlimit64() {
 // Module entry point
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn run_all() {
+pub fn run_all(results: &mut crate::Results) {
     crate::write_banner("PROCESS IDENTITY TESTS");
 
     // Process/thread identity
-    test_getpid();
-    test_gettid();
-    test_getppid();
-    test_uid_gid();
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Process: getpid");
+    test_getpid(&mut cat);
+    results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Process: gettid");
+    test_gettid(&mut cat);
+    results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Process: getppid");
+    test_getppid(&mut cat);
+    results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Process: uid/gid");
+    test_uid_gid(&mut cat);
+    results.add(cat);
+
     // Working directory
-    test_getcwd();
-    test_chdir();
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Process: getcwd");
+    test_getcwd(&mut cat);
+    results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Process: chdir");
+    test_chdir(&mut cat);
+    results.add(cat);
 
     // Scheduler
-    test_sched_yield();
-    test_sched_getaffinity();
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Process: sched_yield");
+    test_sched_yield(&mut cat);
+    results.add(cat);
+
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Process: sched_getaffinity");
+    test_sched_getaffinity(&mut cat);
+    results.add(cat);
 
     // Resource limits
-    test_prlimit64();
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Process: prlimit64");
+    test_prlimit64(&mut cat);
+    results.add(cat);
 
     // Priority scheduling
-    test_sched_priority();
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Process: scheduler priority");
+    test_sched_priority(&mut cat);
+    results.add(cat);
 
     // System info
-    test_uname();
+    let mut cat = TestCategory::new(PseLevel::PSE51, "Process: uname");
+    test_uname(&mut cat);
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Scheduler priority tests
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_sched_priority() {
-    write_str("\n=== Process: scheduler priority ===\n");
+pub fn test_sched_priority(cat: &mut TestCategory) {
+    cat.header();
 
     const SCHED_OTHER: u64 = 0;
     const SCHED_FIFO: u64 = 1;
@@ -541,55 +570,55 @@ pub fn test_sched_priority() {
     // sched_get_priority_max(SCHED_OTHER)
     let ret = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MAX, SCHED_OTHER) };
     if ret >= 0 {
-        pass("sched_get_priority_max(SCHED_OTHER) returns value");
+        cat.pass("sched_get_priority_max(SCHED_OTHER) returns value");
     } else {
-        fail_errno("sched_get_priority_max(SCHED_OTHER)", 0, ret);
+        cat.fail_errno("sched_get_priority_max(SCHED_OTHER)", 0, ret);
     }
 
     // sched_get_priority_min(SCHED_OTHER)
     let ret = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MIN, SCHED_OTHER) };
     if ret >= 0 {
-        pass("sched_get_priority_min(SCHED_OTHER) returns value");
+        cat.pass("sched_get_priority_min(SCHED_OTHER) returns value");
     } else {
-        fail_errno("sched_get_priority_min(SCHED_OTHER)", 0, ret);
+        cat.fail_errno("sched_get_priority_min(SCHED_OTHER)", 0, ret);
     }
 
     // SCHED_FIFO has priority range
     let max = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MAX, SCHED_FIFO) };
     let min = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MIN, SCHED_FIFO) };
     if max > min && min >= 1 {
-        pass("SCHED_FIFO: max > min >= 1");
+        cat.pass("SCHED_FIFO: max > min >= 1");
     } else if max >= 0 && min >= 0 {
-        pass("SCHED_FIFO: priority range valid");
+        cat.pass("SCHED_FIFO: priority range valid");
     } else {
-        fail("SCHED_FIFO: priority range");
+        cat.fail("SCHED_FIFO: priority range");
     }
 
     // SCHED_RR
     let max = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MAX, SCHED_RR) };
     let min = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MIN, SCHED_RR) };
     if max > min && min >= 1 {
-        pass("SCHED_RR: max > min >= 1");
+        cat.pass("SCHED_RR: max > min >= 1");
     } else if max >= 0 && min >= 0 {
-        pass("SCHED_RR: priority range valid");
+        cat.pass("SCHED_RR: priority range valid");
     } else {
-        fail("SCHED_RR: priority range");
+        cat.fail("SCHED_RR: priority range");
     }
 
     // sched_getscheduler(0) — current process
     let ret = unsafe { syscall1(nr::SCHED_GETSCHEDULER, 0) };
     if ret >= 0 {
-        pass("sched_getscheduler(0) returns policy");
+        cat.pass("sched_getscheduler(0) returns policy");
     } else {
-        fail_errno("sched_getscheduler(0)", 0, ret);
+        cat.fail_errno("sched_getscheduler(0)", 0, ret);
     }
 
     // Invalid policy → EINVAL
     let ret = unsafe { syscall1(nr::SCHED_GET_PRIORITY_MAX, 999) };
     if ret == EINVAL {
-        pass("sched_get_priority_max(invalid) returns EINVAL");
+        cat.pass("sched_get_priority_max(invalid) returns EINVAL");
     } else {
-        fail_errno("sched_get_priority_max(invalid) returns EINVAL", EINVAL, ret);
+        cat.fail_errno("sched_get_priority_max(invalid) returns EINVAL", EINVAL, ret);
     }
 }
 
@@ -597,22 +626,21 @@ pub fn test_sched_priority() {
 // uname — system identification
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn test_uname() {
-    write_str("\n=== Process: uname ===\n");
+pub fn test_uname(cat: &mut TestCategory) {
+    cat.header();
 
     // struct utsname: 5 fields of 65 bytes each on Linux
     let mut buf = [0u8; 325]; // 65 * 5
     let ret = unsafe { syscall1(nr::UNAME, buf.as_mut_ptr() as u64) };
     if ret == 0 {
-        pass("uname returns 0");
+        cat.pass("uname returns 0");
         // sysname should be non-empty
         if buf[0] != 0 {
-            pass("uname: sysname is non-empty");
+            cat.pass("uname: sysname is non-empty");
         } else {
-            fail("uname: sysname is non-empty");
+            cat.fail("uname: sysname is non-empty");
         }
     } else {
-        fail_errno("uname returns 0", 0, ret);
+        cat.fail_errno("uname returns 0", 0, ret);
     }
 }
-

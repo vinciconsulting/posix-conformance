@@ -9,8 +9,9 @@
 //! - Boundary: double-wait (ECHILD), exit(127) vs signal death encoding
 
 use crate::nr;
-use crate::{pass, fail, fail_errno, write_str, write_num, write_hex};
+use crate::{write_str, write_num, write_hex};
 use crate::{syscall0, syscall1, syscall2, syscall3, syscall4, syscall5};
+use crate::{TestCategory, PseLevel};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constants
@@ -67,12 +68,14 @@ unsafe fn do_wait4(pid: i64, status: &mut i32, options: u64) -> i64 {
 // Test: Basic fork + exit + wait
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_fork_exit_wait() {
-    write_str("\n=== Fork: basic fork + exit(42) + wait ===\n");
+fn test_fork_exit_wait(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: basic fork + exit(42) + wait");
+    cat.header();
 
     let pid = unsafe { do_fork() };
     if pid < 0 {
-        fail_errno("clone(SIGCHLD) fork", 0, pid);
+        cat.fail_errno("clone(SIGCHLD) fork", 0, pid);
+        results.add(cat);
         return;
     }
 
@@ -84,9 +87,10 @@ fn test_fork_exit_wait() {
 
     // Parent: pid > 0
     if pid > 0 {
-        pass("clone(SIGCHLD) returns child pid");
+        cat.pass("clone(SIGCHLD) returns child pid");
     } else {
-        fail("clone(SIGCHLD) returns child pid");
+        cat.fail("clone(SIGCHLD) returns child pid");
+        results.add(cat);
         return;
     }
 
@@ -95,42 +99,46 @@ fn test_fork_exit_wait() {
     let waited = unsafe { do_wait4(pid, &mut status, 0) };
 
     if waited == pid {
-        pass("wait4 returns child pid");
+        cat.pass("wait4 returns child pid");
     } else {
-        fail_errno("wait4 returns child pid", pid, waited);
+        cat.fail_errno("wait4 returns child pid", pid, waited);
+        results.add(cat);
         return;
     }
 
     // Verify exit status encoding
     if wifexited(status) {
-        pass("WIFEXITED(status) is true");
+        cat.pass("WIFEXITED(status) is true");
     } else {
-        fail("WIFEXITED(status) is true");
+        cat.fail("WIFEXITED(status) is true");
         write_str("    raw status: ");
         write_hex(status as u64);
         write_str("\n");
     }
 
     if wexitstatus(status) == 42 {
-        pass("WEXITSTATUS(status) == 42");
+        cat.pass("WEXITSTATUS(status) == 42");
     } else {
-        fail("WEXITSTATUS(status) == 42");
+        cat.fail("WEXITSTATUS(status) == 42");
         write_str("    got exit status: ");
         write_num(wexitstatus(status) as i64);
         write_str("\n");
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test: Fork child exits 0
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_fork_exit_zero() {
-    write_str("\n=== Fork: child exit(0) ===\n");
+fn test_fork_exit_zero(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: child exit(0)");
+    cat.header();
 
     let pid = unsafe { do_fork() };
     if pid < 0 {
-        fail_errno("fork for exit(0)", 0, pid);
+        cat.fail_errno("fork for exit(0)", 0, pid);
+        results.add(cat);
         return;
     }
     if pid == 0 {
@@ -142,27 +150,30 @@ fn test_fork_exit_zero() {
     let waited = unsafe { do_wait4(pid, &mut status, 0) };
 
     if waited == pid && wifexited(status) && wexitstatus(status) == 0 {
-        pass("child exit(0): reaped with status 0");
+        cat.pass("child exit(0): reaped with status 0");
     } else {
-        fail("child exit(0): reaped with status 0");
+        cat.fail("child exit(0): reaped with status 0");
         write_str("    waited=");
         write_num(waited);
         write_str(" status=");
         write_hex(status as u64);
         write_str("\n");
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test: Fork child exits 127 (convention for exec-not-found)
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_fork_exit_127() {
-    write_str("\n=== Fork: child exit(127) — exec-not-found convention ===\n");
+fn test_fork_exit_127(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: child exit(127) — exec-not-found convention");
+    cat.header();
 
     let pid = unsafe { do_fork() };
     if pid < 0 {
-        fail_errno("fork for exit(127)", 0, pid);
+        cat.fail_errno("fork for exit(127)", 0, pid);
+        results.add(cat);
         return;
     }
     if pid == 0 {
@@ -174,22 +185,25 @@ fn test_fork_exit_127() {
     let waited = unsafe { do_wait4(pid, &mut status, 0) };
 
     if waited == pid && wifexited(status) && wexitstatus(status) == 127 {
-        pass("child exit(127): reaped correctly");
+        cat.pass("child exit(127): reaped correctly");
     } else {
-        fail("child exit(127): reaped correctly");
+        cat.fail("child exit(127): reaped correctly");
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test: Fork child exits 255 (max exit code)
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_fork_exit_max() {
-    write_str("\n=== Fork: child exit(255) — max exit code ===\n");
+fn test_fork_exit_max(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: child exit(255) — max exit code");
+    cat.header();
 
     let pid = unsafe { do_fork() };
     if pid < 0 {
-        fail_errno("fork for exit(255)", 0, pid);
+        cat.fail_errno("fork for exit(255)", 0, pid);
+        results.add(cat);
         return;
     }
     if pid == 0 {
@@ -201,22 +215,25 @@ fn test_fork_exit_max() {
     let waited = unsafe { do_wait4(pid, &mut status, 0) };
 
     if waited == pid && wifexited(status) && wexitstatus(status) == 255 {
-        pass("child exit(255): max code preserved");
+        cat.pass("child exit(255): max code preserved");
     } else {
-        fail("child exit(255): max code preserved");
+        cat.fail("child exit(255): max code preserved");
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test: Child killed by signal → WIFSIGNALED
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_fork_signal_death() {
-    write_str("\n=== Fork: child killed by SIGKILL ===\n");
+fn test_fork_signal_death(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: child killed by SIGKILL");
+    cat.header();
 
     let pid = unsafe { do_fork() };
     if pid < 0 {
-        fail_errno("fork for signal death", 0, pid);
+        cat.fail_errno("fork for signal death", 0, pid);
+        results.add(cat);
         return;
     }
     if pid == 0 {
@@ -227,33 +244,35 @@ fn test_fork_signal_death() {
     // Parent: kill child with SIGKILL
     let ret = unsafe { syscall2(nr::KILL, pid as u64, SIGKILL) };
     if ret != 0 {
-        fail_errno("kill(child, SIGKILL)", 0, ret);
+        cat.fail_errno("kill(child, SIGKILL)", 0, ret);
+        results.add(cat);
         return;
     }
-    pass("kill(child, SIGKILL) returns 0");
+    cat.pass("kill(child, SIGKILL) returns 0");
 
     let mut status: i32 = 0;
     let waited = unsafe { do_wait4(pid, &mut status, 0) };
 
     if waited != pid {
-        fail_errno("wait4 after SIGKILL returns child pid", pid, waited);
+        cat.fail_errno("wait4 after SIGKILL returns child pid", pid, waited);
+        results.add(cat);
         return;
     }
-    pass("wait4 after SIGKILL returns child pid");
+    cat.pass("wait4 after SIGKILL returns child pid");
 
     if wifsignaled(status) {
-        pass("WIFSIGNALED(status) is true");
+        cat.pass("WIFSIGNALED(status) is true");
     } else {
-        fail("WIFSIGNALED(status) is true");
+        cat.fail("WIFSIGNALED(status) is true");
         write_str("    raw status: ");
         write_hex(status as u64);
         write_str("\n");
     }
 
     if wtermsig(status) == SIGKILL as i32 {
-        pass("WTERMSIG(status) == SIGKILL");
+        cat.pass("WTERMSIG(status) == SIGKILL");
     } else {
-        fail("WTERMSIG(status) == SIGKILL");
+        cat.fail("WTERMSIG(status) == SIGKILL");
         write_str("    got signal: ");
         write_num(wtermsig(status) as i64);
         write_str("\n");
@@ -261,22 +280,25 @@ fn test_fork_signal_death() {
 
     // Verify mutual exclusion: WIFEXITED should be false
     if !wifexited(status) {
-        pass("WIFEXITED(status) is false after signal death");
+        cat.pass("WIFEXITED(status) is false after signal death");
     } else {
-        fail("WIFEXITED(status) is false after signal death");
+        cat.fail("WIFEXITED(status) is false after signal death");
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test: WNOHANG — non-blocking wait
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_wnohang() {
-    write_str("\n=== Fork: WNOHANG (non-blocking wait) ===\n");
+fn test_wnohang(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: WNOHANG (non-blocking wait)");
+    cat.header();
 
     let pid = unsafe { do_fork() };
     if pid < 0 {
-        fail_errno("fork for WNOHANG", 0, pid);
+        cat.fail_errno("fork for WNOHANG", 0, pid);
+        results.add(cat);
         return;
     }
     if pid == 0 {
@@ -291,34 +313,38 @@ fn test_wnohang() {
     let mut status: i32 = 0;
     let waited = unsafe { do_wait4(pid, &mut status, WNOHANG) };
     if waited == 0 {
-        pass("WNOHANG returns 0 (child still running)");
+        cat.pass("WNOHANG returns 0 (child still running)");
     } else if waited == pid {
         // Child finished very quickly (possible on fast system)
-        pass("WNOHANG returned child (already exited)");
+        cat.pass("WNOHANG returned child (already exited)");
+        results.add(cat);
         return;
     } else {
-        fail_errno("WNOHANG returns 0 or child pid", 0, waited);
+        cat.fail_errno("WNOHANG returns 0 or child pid", 0, waited);
     }
 
     // Now do blocking wait
     let waited = unsafe { do_wait4(pid, &mut status, 0) };
     if waited == pid && wifexited(status) && wexitstatus(status) == 7 {
-        pass("blocking wait after WNOHANG succeeds");
+        cat.pass("blocking wait after WNOHANG succeeds");
     } else {
-        fail("blocking wait after WNOHANG succeeds");
+        cat.fail("blocking wait after WNOHANG succeeds");
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test: Double wait → ECHILD
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_double_wait() {
-    write_str("\n=== Fork: double wait → ECHILD ===\n");
+fn test_double_wait(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: double wait → ECHILD");
+    cat.header();
 
     let pid = unsafe { do_fork() };
     if pid < 0 {
-        fail_errno("fork for double wait", 0, pid);
+        cat.fail_errno("fork for double wait", 0, pid);
+        results.add(cat);
         return;
     }
     if pid == 0 {
@@ -330,42 +356,47 @@ fn test_double_wait() {
     let mut status: i32 = 0;
     let waited = unsafe { do_wait4(pid, &mut status, 0) };
     if waited != pid {
-        fail("double wait: first wait failed");
+        cat.fail("double wait: first wait failed");
+        results.add(cat);
         return;
     }
-    pass("first wait succeeds");
+    cat.pass("first wait succeeds");
 
     // Second wait: should return ECHILD (zombie already reaped)
     let waited = unsafe { do_wait4(pid, &mut status, 0) };
     if waited == ECHILD {
-        pass("second wait returns ECHILD");
+        cat.pass("second wait returns ECHILD");
     } else {
-        fail_errno("second wait returns ECHILD", ECHILD, waited);
+        cat.fail_errno("second wait returns ECHILD", ECHILD, waited);
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test: waitpid(-1) with no children → ECHILD
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_wait_no_children() {
-    write_str("\n=== Fork: wait(-1) with no children ===\n");
+fn test_wait_no_children(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: wait(-1) with no children");
+    cat.header();
 
     let mut status: i32 = 0;
     let waited = unsafe { do_wait4(-1, &mut status, WNOHANG) };
     if waited == ECHILD {
-        pass("wait(-1, WNOHANG) with no children returns ECHILD");
+        cat.pass("wait(-1, WNOHANG) with no children returns ECHILD");
     } else {
-        fail_errno("wait(-1, WNOHANG) with no children returns ECHILD", ECHILD, waited);
+        cat.fail_errno("wait(-1, WNOHANG) with no children returns ECHILD", ECHILD, waited);
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test: Multiple children, wait for each
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_multiple_children() {
-    write_str("\n=== Fork: multiple children ===\n");
+fn test_multiple_children(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: multiple children");
+    cat.header();
 
     const NUM_CHILDREN: usize = 3;
     let mut pids = [0i64; NUM_CHILDREN];
@@ -374,7 +405,8 @@ fn test_multiple_children() {
     for i in 0..NUM_CHILDREN {
         let pid = unsafe { do_fork() };
         if pid < 0 {
-            fail_errno("fork child", 0, pid);
+            cat.fail_errno("fork child", 0, pid);
+            results.add(cat);
             return;
         }
         if pid == 0 {
@@ -383,7 +415,7 @@ fn test_multiple_children() {
         }
         pids[i] = pid;
     }
-    pass("forked 3 children");
+    cat.pass("forked 3 children");
 
     // Wait for each child specifically
     let mut all_ok = true;
@@ -402,24 +434,27 @@ fn test_multiple_children() {
         }
     }
     if all_ok {
-        pass("all 3 children reaped with correct exit codes");
+        cat.pass("all 3 children reaped with correct exit codes");
     } else {
-        fail("all 3 children reaped with correct exit codes");
+        cat.fail("all 3 children reaped with correct exit codes");
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test: Child getpid/getppid consistency
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_child_pid_consistency() {
-    write_str("\n=== Fork: child pid/ppid consistency ===\n");
+fn test_child_pid_consistency(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: child pid/ppid consistency");
+    cat.header();
 
     let parent_pid = unsafe { syscall0(nr::GETPID) };
 
     let pid = unsafe { do_fork() };
     if pid < 0 {
-        fail_errno("fork for pid check", 0, pid);
+        cat.fail_errno("fork for pid check", 0, pid);
+        results.add(cat);
         return;
     }
     if pid == 0 {
@@ -438,36 +473,40 @@ fn test_child_pid_consistency() {
     let mut status: i32 = 0;
     let waited = unsafe { do_wait4(pid, &mut status, 0) };
     if waited != pid {
-        fail("wait for pid-check child");
+        cat.fail("wait for pid-check child");
+        results.add(cat);
         return;
     }
 
     let code = wexitstatus(status);
     if code & 1 != 0 {
-        pass("child getpid() != parent getpid()");
+        cat.pass("child getpid() != parent getpid()");
     } else {
-        fail("child getpid() != parent getpid()");
+        cat.fail("child getpid() != parent getpid()");
     }
 
     if code & 2 != 0 {
-        pass("child getppid() == parent getpid()");
+        cat.pass("child getppid() == parent getpid()");
     } else {
-        fail("child getppid() == parent getpid()");
+        cat.fail("child getppid() == parent getpid()");
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test: execve with non-existent binary → ENOENT
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_execve_enoent() {
-    write_str("\n=== Fork: execve non-existent → ENOENT ===\n");
+fn test_execve_enoent(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: execve non-existent → ENOENT");
+    cat.header();
 
     const EXECVE: u64 = 59;
 
     let pid = unsafe { do_fork() };
     if pid < 0 {
-        fail_errno("fork for execve test", 0, pid);
+        cat.fail_errno("fork for execve test", 0, pid);
+        results.add(cat);
         return;
     }
     if pid == 0 {
@@ -489,32 +528,36 @@ fn test_execve_enoent() {
     let mut status: i32 = 0;
     let waited = unsafe { do_wait4(pid, &mut status, 0) };
     if waited != pid {
-        fail("wait for execve child");
+        cat.fail("wait for execve child");
+        results.add(cat);
         return;
     }
 
     if wifexited(status) && wexitstatus(status) == 1 {
-        pass("execve(/nonexistent) returns ENOENT in child");
+        cat.pass("execve(/nonexistent) returns ENOENT in child");
     } else {
-        fail("execve(/nonexistent) returns ENOENT in child");
+        cat.fail("execve(/nonexistent) returns ENOENT in child");
         write_str("    exit code: ");
         write_num(wexitstatus(status) as i64);
         write_str("\n");
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test: execve with bad pointer → EFAULT
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_execve_efault() {
-    write_str("\n=== Fork: execve bad pointer → EFAULT ===\n");
+fn test_execve_efault(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: execve bad pointer → EFAULT");
+    cat.header();
 
     const EXECVE: u64 = 59;
 
     let pid = unsafe { do_fork() };
     if pid < 0 {
-        fail_errno("fork for execve EFAULT", 0, pid);
+        cat.fail_errno("fork for execve EFAULT", 0, pid);
+        results.add(cat);
         return;
     }
     if pid == 0 {
@@ -528,22 +571,25 @@ fn test_execve_efault() {
     let mut status: i32 = 0;
     let waited = unsafe { do_wait4(pid, &mut status, 0) };
     if waited == pid && wifexited(status) && wexitstatus(status) == 1 {
-        pass("execve(NULL) returns EFAULT");
+        cat.pass("execve(NULL) returns EFAULT");
     } else {
-        fail("execve(NULL) returns EFAULT");
+        cat.fail("execve(NULL) returns EFAULT");
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test: exit_group terminates all threads in child
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_exit_group() {
-    write_str("\n=== Fork: exit_group in child ===\n");
+fn test_exit_group(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: exit_group in child");
+    cat.header();
 
     let pid = unsafe { do_fork() };
     if pid < 0 {
-        fail_errno("fork for exit_group", 0, pid);
+        cat.fail_errno("fork for exit_group", 0, pid);
+        results.add(cat);
         return;
     }
     if pid == 0 {
@@ -555,34 +601,38 @@ fn test_exit_group() {
     let mut status: i32 = 0;
     let waited = unsafe { do_wait4(pid, &mut status, 0) };
     if waited == pid && wifexited(status) && wexitstatus(status) == 99 {
-        pass("exit_group(99) reaped correctly");
+        cat.pass("exit_group(99) reaped correctly");
     } else {
-        fail("exit_group(99) reaped correctly");
+        cat.fail("exit_group(99) reaped correctly");
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test: child inherits open file descriptors
 // ════════════════════════════════════════════════════════════════════════════
 
-fn test_child_inherits_fds() {
-    write_str("\n=== Fork: child inherits open fds ===\n");
+fn test_child_inherits_fds(results: &mut crate::Results) {
+    let mut cat = TestCategory::new(PseLevel::PSE52, "Fork: child inherits open fds");
+    cat.header();
 
     // Create a pipe, fork, child writes to pipe, parent reads
     let mut fds = [0i32; 2];
     let ret = unsafe { syscall2(nr::PIPE2, fds.as_mut_ptr() as u64, 0) };
     if ret != 0 {
-        fail_errno("pipe2 for fd inheritance", 0, ret);
+        cat.fail_errno("pipe2 for fd inheritance", 0, ret);
+        results.add(cat);
         return;
     }
 
     let pid = unsafe { do_fork() };
     if pid < 0 {
-        fail_errno("fork for fd inheritance", 0, pid);
+        cat.fail_errno("fork for fd inheritance", 0, pid);
         unsafe {
             syscall1(nr::CLOSE, fds[0] as u64);
             syscall1(nr::CLOSE, fds[1] as u64);
         }
+        results.add(cat);
         return;
     }
     if pid == 0 {
@@ -611,49 +661,50 @@ fn test_child_inherits_fds() {
     unsafe { do_wait4(pid, &mut status, 0) };
 
     if nread == 4 && buf == [0xDE, 0xAD, 0xBE, 0xEF] {
-        pass("child wrote to inherited pipe, parent read magic bytes");
+        cat.pass("child wrote to inherited pipe, parent read magic bytes");
     } else {
-        fail("child wrote to inherited pipe, parent read magic bytes");
+        cat.fail("child wrote to inherited pipe, parent read magic bytes");
         write_str("    nread=");
         write_num(nread);
         write_str("\n");
     }
+    results.add(cat);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Module entry point
 // ════════════════════════════════════════════════════════════════════════════
 
-pub fn run_all() {
+pub fn run_all(results: &mut crate::Results) {
     crate::write_banner("FORK/EXEC/WAIT TESTS (PSE52)");
 
     // Basic fork + exit + wait
-    test_fork_exit_wait();
-    test_fork_exit_zero();
-    test_fork_exit_127();
-    test_fork_exit_max();
+    test_fork_exit_wait(results);
+    test_fork_exit_zero(results);
+    test_fork_exit_127(results);
+    test_fork_exit_max(results);
 
     // Signal-caused death
-    test_fork_signal_death();
+    test_fork_signal_death(results);
 
     // Wait semantics
-    test_wnohang();
-    test_double_wait();
-    test_wait_no_children();
+    test_wnohang(results);
+    test_double_wait(results);
+    test_wait_no_children(results);
 
     // Multiple children
-    test_multiple_children();
+    test_multiple_children(results);
 
     // PID consistency across fork
-    test_child_pid_consistency();
+    test_child_pid_consistency(results);
 
     // Exec
-    test_execve_enoent();
-    test_execve_efault();
+    test_execve_enoent(results);
+    test_execve_efault(results);
 
     // exit_group
-    test_exit_group();
+    test_exit_group(results);
 
     // FD inheritance
-    test_child_inherits_fds();
+    test_child_inherits_fds(results);
 }
