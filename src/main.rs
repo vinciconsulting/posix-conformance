@@ -355,6 +355,29 @@ pub fn write_num(n: i64) {
     }
 }
 
+/// Print a centered banner: ╔═══╗ / ║  msg  ║ / ╚═══╝
+/// Width = max(60, msg.len() + 4), so the message always has at least 2 chars padding per side.
+pub fn write_banner(msg: &str) {
+    let min_width = 60;
+    let inner = if msg.len() + 4 > min_width { msg.len() + 4 } else { min_width };
+
+    write_str("\n╔");
+    for _ in 0..inner { write_str("═"); }
+    write_str("╗\n║");
+
+    let pad_total = inner - msg.len();
+    let pad_left = pad_total / 2;
+    let pad_right = pad_total - pad_left;
+
+    for _ in 0..pad_left { write_str(" "); }
+    write_str(msg);
+    for _ in 0..pad_right { write_str(" "); }
+
+    write_str("║\n╚");
+    for _ in 0..inner { write_str("═"); }
+    write_str("╝\n");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Test framework
 // ════════════════════════════════════════════════════════════════════════════
