@@ -1336,7 +1336,7 @@ pub fn run_all() {
     test_getdents64();
 
     // Additional filesystem operations
-    test_renameat();
+    test_renameat();  // renameat2(flags=0) = POSIX renameat
     test_linkat();
     test_symlink_readlink();
     test_faccessat();

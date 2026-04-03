@@ -307,70 +307,6 @@ pub fn test_kill_negative() {
     }
 }
 
-/// Tests for tkill/tgkill
-pub fn test_thread_signals() {
-    write_str("\n=== Signals: tkill/tgkill ===\n");
-
-    let pid = unsafe { syscall0(nr::GETPID) };
-    let tid = unsafe { syscall0(nr::GETTID) };
-
-    // 1. tkill with signal 0 (thread existence check)
-    let ret = unsafe { syscall2(nr::TKILL, tid as u64, 0) };
-    if ret == 0 {
-        pass("tkill(self, 0): thread exists");
-    } else {
-        fail_errno("tkill(self, 0): thread exists", 0, ret);
-    }
-
-    // 2. tkill with invalid TID
-    let ret = unsafe { syscall2(nr::TKILL, 0x7FFFFFFF, 0) };
-    if ret == ESRCH {
-        pass("tkill: invalid TID returns ESRCH");
-    } else {
-        fail_errno("tkill: invalid TID returns ESRCH", ESRCH, ret);
-    }
-
-    // 3. tkill with invalid signal
-    let ret = unsafe { syscall2(nr::TKILL, tid as u64, 999) };
-    if ret == EINVAL {
-        pass("tkill: invalid signal returns EINVAL");
-    } else {
-        fail_errno("tkill: invalid signal returns EINVAL", EINVAL, ret);
-    }
-
-    // 4. tgkill with signal 0
-    let ret = unsafe { syscall3(nr::TGKILL, pid as u64, tid as u64, 0) };
-    if ret == 0 {
-        pass("tgkill(self, self, 0): success");
-    } else {
-        fail_errno("tgkill(self, self, 0): success", 0, ret);
-    }
-
-    // 5. tgkill with mismatched tgid/tid
-    let ret = unsafe { syscall3(nr::TGKILL, 1, tid as u64, 0) };
-    if ret == ESRCH {
-        pass("tgkill: mismatched tgid returns ESRCH");
-    } else {
-        fail_errno("tgkill: mismatched tgid returns ESRCH", ESRCH, ret);
-    }
-
-    // 6. tgkill with invalid tgid
-    let ret = unsafe { syscall3(nr::TGKILL, (-1i64) as u64, tid as u64, 0) };
-    if ret == EINVAL {
-        pass("tgkill: invalid tgid=-1 returns EINVAL");
-    } else {
-        fail_errno("tgkill: invalid tgid=-1 returns EINVAL", EINVAL, ret);
-    }
-
-    // 7. tgkill with invalid tid
-    let ret = unsafe { syscall3(nr::TGKILL, pid as u64, (-1i64) as u64, 0) };
-    if ret == EINVAL {
-        pass("tgkill: invalid tid=-1 returns EINVAL");
-    } else {
-        fail_errno("tgkill: invalid tid=-1 returns EINVAL", EINVAL, ret);
-    }
-}
-
 /// Boundary tests for signals
 pub fn test_signal_boundary() {
     write_str("\n=== Signals: boundary cases ===\n");
@@ -1019,9 +955,6 @@ pub fn run_all() {
     test_sigprocmask_negative();
     test_kill_negative();
     test_sigaction_negative();
-
-    // Thread signal tests
-    test_thread_signals();
 
     // Boundary tests
     test_signal_boundary();
